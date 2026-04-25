@@ -1,0 +1,17 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at 20% 10%, #171b3b 0, #090b1a 40%, #03040a 100%);
+  overflow: hidden;
+}
+
+canvas {
+  display: block;
+  margin: 0 auto;
+  border: 1px solid #15f5ff66;
+  box-shadow: 0 0 24px #00f2ff55;
+}

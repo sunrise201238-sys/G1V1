@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: gvg-server
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    plan: starter
+
+  - type: static
+    name: gvg-client
+    rootDir: client
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
