@@ -7,7 +7,7 @@ services:
     startCommand: npm start
     plan: starter
 
-  - type: web
+  - type: static
     name: gvg-client
     rootDir: client
     buildCommand: npm install && npm run build
