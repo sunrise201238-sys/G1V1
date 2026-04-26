@@ -1,6 +1,6 @@
 :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
-body { margin: 0; overflow: hidden; background: #06090f; touch-action: none !important; }
-#app { width: 100vw; height: 100vh; position: relative; }
+html, body { margin: 0; overflow: hidden; background: #06090f; touch-action: none !important; }
+#app { width: 100vw; height: 100vh; position: relative; touch-action: none !important; }
 canvas { display: block; width: 100%; height: 100%; touch-action: none !important; }
 
 .touch-hud { position: absolute; inset: 0; pointer-events: none; }
@@ -15,6 +15,17 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none !importan
 .buttons { position: absolute; right: 22px; bottom: 18px; width: 240px; display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 10px; pointer-events: auto; }
 .buttons button { border: 0; border-radius: 999px; padding: 12px 0; color: #dcf9ff; background: rgba(146, 207, 230, 0.2); font-weight: 700; }
 
-.menu { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgba(5, 8, 14, 0.78); z-index: 20; }
+.menu { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgba(5, 8, 14, 0.78); z-index: 100; pointer-events: auto; }
 .menu h2 { margin: 0 0 8px; color: #d7f6ff; }
 .menu button { width: 260px; padding: 14px 10px; border-radius: 10px; border: 1px solid #4c6176; background: #1a2634; color: #e5fbff; }
+
+.speed-lines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 80ms linear;
+  background:
+    linear-gradient(100deg, rgba(120, 220, 255, 0.28), transparent 32%) left/18% 100% no-repeat,
+    linear-gradient(260deg, rgba(120, 220, 255, 0.28), transparent 32%) right/18% 100% no-repeat;
+}
