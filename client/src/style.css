@@ -5,23 +5,96 @@
 
 body {
   margin: 0;
-  background: radial-gradient(circle at 25% 20%, #111b2b 0, #070b16 45%, #03040a 100%);
   overflow: hidden;
+  background: #06090f;
 }
 
 #app {
   width: 100vw;
   height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  position: relative;
 }
 
 canvas {
   display: block;
-  width: min(100vw, 1280px);
-  height: auto;
-  max-height: 100vh;
-  border: 1px solid #15f5ff55;
-  box-shadow: 0 0 36px #00f2ff44;
+  width: 100%;
+  height: 100%;
+}
+
+.touch-hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.status {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #d8fcff;
+  opacity: 0.85;
+  font-size: 18px;
+}
+
+.boost {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 38vw;
+  max-width: 340px;
+  height: 10px;
+  background: rgba(12, 18, 28, 0.6);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+#boost-fill {
+  height: 100%;
+  width: 100%;
+  background: #90ff63;
+}
+
+.joy {
+  position: absolute;
+  left: 28px;
+  bottom: 28px;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  background: rgba(160, 200, 220, 0.15);
+  pointer-events: auto;
+}
+
+.stick {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 56px;
+  height: 56px;
+  margin-left: -28px;
+  margin-top: -28px;
+  border-radius: 50%;
+  background: rgba(240, 252, 255, 0.35);
+}
+
+.buttons {
+  position: absolute;
+  right: 22px;
+  bottom: 18px;
+  width: 220px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.buttons button {
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 0;
+  color: #dcf9ff;
+  background: rgba(146, 207, 230, 0.2);
+  font-weight: 700;
 }

@@ -1,28 +1,22 @@
-# Aegis Brawler -> 3D Follow-Cam Mobile 1v1 Prototype
+# GVG Mecha Rebuild (Three.js + Cannon)
 
-This prototype now targets a **third-person over-the-shoulder combat camera** with lock-on tethering for high-speed 1v1 mobile action.
+This client has been reset to a **mobile-first, true 3D third-person mecha prototype** using **Three.js** for rendering and **cannon-es** for 3D physics.
 
-## Camera + POV
-- Third-person follow-cam behind player.
-- Hard lock-on framing anchored to player-opponent line.
-- Dynamic focal scaling (close FOV near melee, wider FOV at range).
-- Dash adds temporary FOV expansion for speed sensation.
-- Vertical rise/drop changes camera pitch to preserve opponent + ground readability.
+## Core architecture
+- Engine: Three.js (`WebGLRenderer`, perspective camera).
+- Physics: cannon-es rigid bodies for 3D movement/collision.
+- Camera: permanent third-person follow-cam behind the player with lock-on midpoint framing and dynamic FOV.
+- Controls: touch joystick + action buttons (Boost / Step / Shoot / Melee / Rise / Drop).
 
-## Combat Feel Layer
-- Hit-stop pulses on successful hits.
-- Heavy impacts and hard landings trigger screen shake.
-- Boost step triggers screen-space distortion flash + trail pulse.
-- KO hit triggers 2s cinematic orbit before result scene.
+## Combat loop
+- Boost gauge drains on dash/rise/step.
+- Overheat locks movement for 1.5s.
+- Step / dash can interrupt actions (step-cancel pacing).
 
-## Mobile UX
-- Transparent dead-zone joystick + translucent action buttons.
-- Diegetic in-world HP/boost bars floating near units.
-- Touch input buffer for rapid cancels.
-
-## Simulation
-- Shared pseudo-3D simulation (x/y/z), boost economy, step tracking-cut, homing projectiles, cancel windows, and melee magnetism.
-- 25ms tick loop with fighter + projectile interpolation for smoother online playback.
+## Visual style
+- Modular bulky mechs (head/core/arms/legs).
+- Industrial toon/metal palette.
+- Thruster plumes activate during boost actions.
 
 ## Dev
 ```bash
