@@ -8,20 +8,22 @@ const UNIT_DATA = {
   unit1: {
     name: 'Unit 1 / Machine Gun',
     lockRange: 28,
-    projectileSpeed: 36,
+    projectileSpeed: 50,
     fireCooldownMs: 140,
     spreadCount: 1,
     spreadAngle: 0.02,
-    damage: 4
+    damage: 4,
+    homingTurn: 0.14
   },
   unit2: {
     name: 'Unit 2 / Shotgun',
     lockRange: 16,
-    projectileSpeed: 30,
+    projectileSpeed: 42,
     fireCooldownMs: 520,
     spreadCount: 5,
     spreadAngle: Math.PI / 12,
-    damage: 5
+    damage: 5,
+    homingTurn: 0.08
   }
 };
 
@@ -34,6 +36,10 @@ const state = {
   projectiles: [],
   hud: null,
   reticle: null,
+  speedLines: null,
+  vfx: [],
+  reticlePulseUntil: 0,
+  reticleWasRed: false,
   running: false,
   matchStartAt: 0
 };
@@ -47,44 +53,69 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0b0f17);
 scene.fog = new THREE.Fog(0x0b0f17, 28, 160);
 const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 300);
-scene.add(new THREE.HemisphereLight(0x8cb2ff, 0x181818, 1));
-const key = new THREE.DirectionalLight(0xe5eeff, 1.2);
+camera.position.set(0, 5, 15);
+camera.lookAt(0, 0, 0);
+const ambient = new THREE.AmbientLight(0x8cb2ff, 0.7);
+scene.add(ambient);
+const key = new THREE.DirectionalLight(0xe5eeff, 1.15);
 key.position.set(18, 34, 12);
 scene.add(key);
 
 const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -18, 0) });
 world.broadphase = new CANNON.SAPBroadphase(world);
 world.allowSleep = true;
-const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
-groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Box(new CANNON.Vec3(140, 0.25, 140)) });
+groundBody.position.set(0, -0.25, 0);
 world.addBody(groundBody);
+const raycastResult = new CANNON.RaycastResult();
 
 const gridCanvas = document.createElement('canvas');
 gridCanvas.width = 512;
 gridCanvas.height = 512;
 const ctx = gridCanvas.getContext('2d');
-ctx.fillStyle = '#1c2230';
+ctx.fillStyle = '#141b27';
 ctx.fillRect(0, 0, 512, 512);
-ctx.strokeStyle = '#3d4b64';
-ctx.lineWidth = 2;
-for (let i = 0; i < 16; i += 1) {
+ctx.strokeStyle = '#4f6387';
+ctx.lineWidth = 2.5;
+for (let i = 0; i < 32; i += 1) {
+  const p = i * 16;
   ctx.beginPath();
-  ctx.moveTo(i * 32, 0);
-  ctx.lineTo(i * 32, 512);
+  ctx.moveTo(p, 0);
+  ctx.lineTo(p, 512);
   ctx.stroke();
   ctx.beginPath();
-  ctx.moveTo(0, i * 32);
-  ctx.lineTo(512, i * 32);
+  ctx.moveTo(0, p);
+  ctx.lineTo(512, p);
+  ctx.stroke();
+}
+ctx.strokeStyle = '#8ca0ca';
+ctx.lineWidth = 3.5;
+for (let i = 0; i < 9; i += 1) {
+  const p = i * 64;
+  ctx.beginPath();
+  ctx.moveTo(p, 0);
+  ctx.lineTo(p, 512);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, p);
+  ctx.lineTo(512, p);
   ctx.stroke();
 }
 const gridTex = new THREE.CanvasTexture(gridCanvas);
 gridTex.wrapS = gridTex.wrapT = THREE.RepeatWrapping;
 gridTex.repeat.set(8, 8);
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(280, 280), new THREE.MeshToonMaterial({ map: gridTex, color: 0xaac2ff }));
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(280, 280), new THREE.MeshStandardMaterial({
+  map: gridTex,
+  color: 0x8ea8de,
+  metalness: 0.5,
+  roughness: 0.58
+}));
 ground.rotation.x = -Math.PI / 2;
 scene.add(ground);
+const gridHelper = new THREE.GridHelper(200, 50, 0xff0000, 0x444444);
+scene.add(gridHelper);
 
-const input = { x: 0, y: 0, boost: false, rise: false, step: false, shootTap: false, meleeTap: false };
+const input = { x: 0, y: 0, boost: false, rise: false, step: false, shootTap: false, shootHold: false, meleeTap: false };
 
 function createMech(color, unitData) {
   const root = new THREE.Group();
@@ -97,7 +128,7 @@ function createMech(color, unitData) {
     return mesh;
   };
 
-  make(new THREE.BoxGeometry(2.4, 2.35, 1.8), armor, 0, 0, 0);
+  const torso = make(new THREE.BoxGeometry(2.4, 2.35, 1.8), armor, 0, 0, 0);
   make(new THREE.BoxGeometry(1.1, 0.68, 1.05), steel, 0, 1.62, 0);
   make(new THREE.BoxGeometry(1.25, 1.0, 1.7), steel, -1.65, 0.95, 0);
   make(new THREE.BoxGeometry(1.25, 1.0, 1.7), steel, 1.65, 0.95, 0);
@@ -119,7 +150,7 @@ function createMech(color, unitData) {
   scene.add(root);
 
   const body = new CANNON.Body({ mass: 3, shape: new CANNON.Box(new CANNON.Vec3(0.95, 1.8, 0.8)), linearDamping: 0.24 });
-  body.position.set(0, 3, 0);
+  body.position.set(0, 2.45, 0);
   world.addBody(body);
 
   return {
@@ -129,6 +160,10 @@ function createMech(color, unitData) {
     thrusters: [thrusterL, thrusterR],
     plumeLight,
     trail: [],
+    torso,
+    modelYOffset: 2.35,
+    legLength: 2.35,
+    grounded: false,
     arms: { left: armL, right: armR },
     state: {
       action: 'idle',
@@ -138,6 +173,17 @@ function createMech(color, unitData) {
       overheatedUntil: 0,
       hitStunUntil: 0,
       meleeAnimUntil: 0,
+      meleeLungeUntil: 0,
+      staggerUntil: 0,
+      evadeHomingUntil: 0,
+      stepCooldownUntil: 0,
+      dashRecoverUntil: 0,
+      antiMeleeUntil: 0,
+      meleeCooldownUntil: 0,
+      machineBurstRemaining: 0,
+      nextFireAt: 0,
+      strafeSign: 1,
+      vulnerabilityMove: false,
       stackUntil: 0,
       lastFireAt: 0
     }
@@ -149,7 +195,7 @@ function makeReticleSprite() {
   c.width = c.height = 128;
   const x = c.getContext('2d');
   x.strokeStyle = '#7effbd';
-  x.lineWidth = 3;
+  x.lineWidth = 6;
   x.beginPath();
   x.arc(64, 64, 56, 0, Math.PI * 2);
   x.stroke();
@@ -169,12 +215,14 @@ function setupHUD() {
     <div class="boost"><div id="boost-fill"></div></div>
     <div class="joy" id="joy"><div class="stick"></div></div>
     <div class="buttons" id="buttons"></div>
+    <div class="speed-lines" id="speed-lines"></div>
   `;
   app.appendChild(hud);
 
   ['boost', 'step', 'shoot', 'melee', 'rise'].forEach((action) => {
     const b = document.createElement('button');
     b.dataset.k = action;
+    b.className = `btn-${action}`;
     b.textContent = action.toUpperCase();
     hud.querySelector('#buttons').appendChild(b);
   });
@@ -221,16 +269,23 @@ function setupHUD() {
   hud.querySelectorAll('button').forEach((btn) => {
     const k = btn.dataset.k;
     btn.addEventListener('pointerdown', () => {
-      if (k === 'shoot') input.shootTap = true;
+      if (k === 'shoot') {
+        input.shootTap = true;
+        input.shootHold = true;
+      }
       else if (k === 'melee') input.meleeTap = true;
       else input[k] = true;
     });
     btn.addEventListener('pointerup', () => {
-      if (k !== 'shoot' && k !== 'melee') input[k] = false;
+      if (k === 'shoot') input.shootHold = false;
+      else if (k === 'boost') {
+        if (Math.hypot(input.x, input.y) < 0.2) input.boost = false;
+      } else if (k !== 'melee') input[k] = false;
     });
   });
 
   state.hud = hud;
+  state.speedLines = hud.querySelector('#speed-lines');
   return {
     hp: hud.querySelector('#health-fill'),
     boost: hud.querySelector('#boost-fill')
@@ -263,6 +318,7 @@ function spawnProjectiles(owner, target) {
       mesh,
       vel: dir.multiplyScalar(owner.unit.projectileSpeed),
       homing: owner.state.redLock,
+      homingTurn: owner.state.redLock ? owner.unit.homingTurn : 0,
       ttl: 2.2,
       damage: owner.unit.damage,
       hitStunMs: 200
@@ -271,6 +327,7 @@ function spawnProjectiles(owner, target) {
 }
 
 function updateProjectileSystem(dt) {
+  const now = performance.now();
   for (let i = state.projectiles.length - 1; i >= 0; i -= 1) {
     const p = state.projectiles[i];
     p.ttl -= dt;
@@ -280,15 +337,23 @@ function updateProjectileSystem(dt) {
       continue;
     }
 
-    if (p.homing) {
+    if (p.homing && p.homingTurn > 0 && now >= p.target.state.evadeHomingUntil) {
       const desired = new THREE.Vector3().subVectors(p.target.root.position, p.mesh.position).normalize().multiplyScalar(p.vel.length());
-      p.vel.lerp(desired, 0.12);
+      p.vel.lerp(desired, p.homingTurn);
     }
 
     p.mesh.position.addScaledVector(p.vel, dt);
-    if (p.mesh.position.distanceTo(p.target.root.position) < 1.4) {
-      p.target.state.hp = Math.max(0, p.target.state.hp - p.damage);
+    const hitRadius = p.target.state.vulnerabilityMove ? 2 : 1.15;
+    if (p.mesh.position.distanceTo(p.target.root.position) < hitRadius) {
+      const mitigation = p.target.state.vulnerabilityMove ? 1.35 : 1;
+      p.target.state.hp = Math.max(0, p.target.state.hp - p.damage * mitigation);
       p.target.state.hitStunUntil = performance.now() + p.hitStunMs;
+      spawnHitEffect(p.target.root.position, p.target === state.player ? 0x67f2ff : 0xff73d2);
+      if (p.target.state.action === 'melee-lunge') {
+        p.target.state.action = 'stagger';
+        p.target.state.staggerUntil = now + 280;
+        p.target.state.meleeLungeUntil = 0;
+      }
       p.target.body.velocity.set(0, 0, 0);
       scene.remove(p.mesh);
       state.projectiles.splice(i, 1);
@@ -315,7 +380,7 @@ function applyRepulsion(now) {
 
 function updateBoost(mech, now, action) {
   const s = mech.state;
-  const grounded = mech.body.position.y <= 2.9;
+  const grounded = mech.grounded || mech.body.position.y <= 2.55;
 
   if (now < s.overheatedUntil) {
     s.action = 'hard-landing';
@@ -329,7 +394,7 @@ function updateBoost(mech, now, action) {
   s.action = action;
   const consume = ['dash', 'step', 'rise'].includes(action);
   if (consume) s.boost = Math.max(0, s.boost - 1.1);
-  else if (grounded && now >= s.stackUntil) s.boost = Math.min(100, s.boost + 0.68); // +75% recovery
+  else if (grounded && now >= s.stackUntil) s.boost = Math.min(100, s.boost + 2.04); // 3x faster recovery
 
   if (s.boost <= 0) {
     s.overheatedUntil = now + 1500;
@@ -351,13 +416,18 @@ function updatePlayer(now) {
     return;
   }
 
-  const forward = new THREE.Vector3().subVectors(e, p).setY(0).normalize();
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  forward.y = 0;
+  forward.normalize();
   const right = new THREE.Vector3(-forward.z, 0, forward.x);
   const move = forward.clone().multiplyScalar(-input.y).add(right.multiplyScalar(input.x));
 
-  const speed = input.boost ? 21 : 10;
+  const recoveringFromDash = now < state.player.state.dashRecoverUntil;
+  const speed = input.boost ? 21 : (recoveringFromDash ? 6.5 : 10);
   state.player.body.velocity.x = move.x * speed;
   state.player.body.velocity.z = move.z * speed;
+  state.player.state.vulnerabilityMove = !input.boost && !input.step && Math.hypot(input.x, input.y) > 0.2;
 
   let action = 'idle';
   if (input.rise) {
@@ -366,26 +436,57 @@ function updatePlayer(now) {
   } else if (input.step) {
     state.player.body.velocity.x += move.x * 15;
     state.player.body.velocity.z += move.z * 15;
+    state.player.state.evadeHomingUntil = now + 220;
     action = 'step';
   } else if (input.boost) {
+    state.player.state.evadeHomingUntil = now + 320;
+    state.player.state.antiMeleeUntil = now + 260;
     action = 'dash';
+    triggerDashDefense(now);
   }
 
   if (input.shootTap) {
     spawnProjectiles(state.player, state.enemy);
+    if (state.player.unit.spreadCount === 1) state.player.state.machineBurstRemaining = 4;
+    triggerEnemyEvasion(now);
     if (action === 'idle') action = 'shoot';
     input.shootTap = false;
   }
+  if (input.shootHold && state.player.unit.spreadCount === 1 && state.player.state.machineBurstRemaining > 0) {
+    const firedAt = state.player.state.lastFireAt;
+    spawnProjectiles(state.player, state.enemy);
+    if (state.player.state.lastFireAt !== firedAt) {
+      state.player.state.machineBurstRemaining -= 1;
+      triggerEnemyEvasion(now);
+      if (action === 'idle') action = 'shoot';
+    }
+  }
+  if (!input.shootHold) state.player.state.machineBurstRemaining = 0;
 
   if (input.meleeTap) {
-    if (state.player.state.redLock) {
+    if (state.player.state.redLock && now >= state.player.state.meleeCooldownUntil) {
+      const distance = p.distanceTo(e);
+      const lungeDistance = 9.6;
+      if (distance > state.player.unit.lockRange) {
+        input.meleeTap = false;
+        updateBoost(state.player, now, action);
+        return;
+      }
       const lunge = new THREE.Vector3().subVectors(e, p).setY(0).normalize();
-      state.player.body.velocity.x = lunge.x * 20;
-      state.player.body.velocity.z = lunge.z * 20;
-      if (p.distanceTo(e) < 10) state.enemy.state.hp = Math.max(0, state.enemy.state.hp - 14);
-      state.player.state.meleeAnimUntil = now + 180;
+      state.player.body.velocity.x = lunge.x * 31;
+      state.player.body.velocity.z = lunge.z * 31;
+      const meleeReach = lungeDistance;
+      if (p.distanceTo(e) < meleeReach) {
+        state.enemy.state.hp = Math.max(0, state.enemy.state.hp - 14);
+        spawnHitEffect(state.enemy.root.position, 0xff73d2);
+      }
+      state.player.state.meleeAnimUntil = now + 120;
+      state.player.state.meleeLungeUntil = now + 170;
+      state.player.state.meleeCooldownUntil = now + 1000;
       action = 'melee-lunge';
-    } else {
+      spawnMeleeSlash(state.player, 0x8efbff);
+      if (state.speedLines) state.speedLines.style.opacity = '1';
+    } else if (!state.player.state.redLock) {
       action = 'melee-whiff';
     }
     input.meleeTap = false;
@@ -395,11 +496,6 @@ function updatePlayer(now) {
 }
 
 function updateEnemy(now) {
-  if (now < state.enemy.state.hitStunUntil) {
-    state.enemy.body.velocity.set(0, 0, 0);
-    return;
-  }
-
   const p = state.player.root.position;
   const e = state.enemy.root.position;
   const toPlayer = new THREE.Vector3().subVectors(p, e).setY(0);
@@ -408,23 +504,44 @@ function updateEnemy(now) {
   const side = new THREE.Vector3(-dir.z, 0, dir.x);
 
   // dynamic evasion + aggressive kiting
-  const retreat = dist < 14 ? -1.25 : dist > 22 ? 0.5 : -0.15;
-  const lateral = Math.sin(now * 0.0024 + dist) > 0 ? 1 : -1;
-  const move = dir.clone().multiplyScalar(retreat).add(side.multiplyScalar(lateral * (0.7 + Math.random() * 0.35)));
+  if (Math.random() > 0.985) state.enemy.state.strafeSign *= -1;
+  const retreat = dist < 11 ? -0.9 : dist > 19 ? 0.62 : 0.15;
+  const move = dir.clone().multiplyScalar(retreat).add(side.multiplyScalar(state.enemy.state.strafeSign * 1.05));
 
-  state.enemy.body.velocity.x = move.x * 8.7;
-  state.enemy.body.velocity.z = move.z * 8.7;
+  const moveScalar = now < state.enemy.state.hitStunUntil ? 5.8 : 10.6;
+  state.enemy.body.velocity.x = move.x * moveScalar;
+  state.enemy.body.velocity.z = move.z * moveScalar;
 
-  if (dist < 9 && state.enemy.state.boost > 25 && Math.random() > 0.8) {
-    state.enemy.body.velocity.x += -dir.x * 20;
-    state.enemy.body.velocity.z += -dir.z * 20;
+  if (dist < 10 && state.enemy.state.boost > 18 && now > state.enemy.state.stepCooldownUntil && Math.random() > 0.66) {
+    const dodge = Math.random() > 0.5 ? side : side.clone().multiplyScalar(-1);
+    state.enemy.body.velocity.x += dodge.x * 22;
+    state.enemy.body.velocity.z += dodge.z * 22;
+    state.enemy.state.evadeHomingUntil = now + 240;
+    state.enemy.state.stepCooldownUntil = now + 520;
     state.enemy.state.action = 'step';
+  } else {
+    state.enemy.state.action = 'dash';
+    if (dist >= 10 && dist <= 20 && state.enemy.state.boost > 12 && Math.random() > 0.88) {
+      const dodge = Math.random() > 0.5 ? side : side.clone().multiplyScalar(-1);
+      state.enemy.body.velocity.x += dodge.x * 26;
+      state.enemy.body.velocity.z += dodge.z * 26;
+      state.enemy.state.evadeHomingUntil = now + 280;
+    }
   }
+  if (dist > 14 && Math.random() > 0.9) state.enemy.state.evadeHomingUntil = now + 90;
 
-  if (Math.random() > 0.982) spawnProjectiles(state.enemy, state.player);
+  if (now >= state.enemy.state.nextFireAt) {
+    spawnProjectiles(state.enemy, state.player);
+    state.enemy.state.nextFireAt = now + PhaserLikeBetween(1500, 3000);
+  }
   if (Math.random() > 0.994) state.enemy.body.velocity.y = 9;
 
-  updateBoost(state.enemy, now, dist > 10 ? 'dash' : 'idle');
+  if (dist < 7.2 && now > state.player.state.antiMeleeUntil && Math.random() > 0.82) {
+    state.enemy.body.velocity.x += dir.x * 16;
+    state.enemy.body.velocity.z += dir.z * 16;
+    state.enemy.state.action = 'melee-lunge';
+  }
+  updateBoost(state.enemy, now, state.enemy.state.action);
 }
 
 function updateLocksAndReticle() {
@@ -432,27 +549,48 @@ function updateLocksAndReticle() {
   state.player.state.redLock = dist <= state.player.unit.lockRange;
   state.enemy.state.redLock = dist <= state.enemy.unit.lockRange;
 
-  state.reticle.position.copy(state.enemy.root.position).add(new THREE.Vector3(0, 2.8, 0));
+  state.reticle.position.set(0, 0, 0.95);
   state.reticle.material.color.set(state.player.state.redLock ? 0xff5f72 : 0x7effbd);
+  if (state.player.state.redLock !== state.reticleWasRed) {
+    state.reticlePulseUntil = performance.now() + 180;
+    state.reticleWasRed = state.player.state.redLock;
+  }
   const distScale = THREE.MathUtils.clamp(7 / camera.position.distanceTo(state.enemy.root.position), 0.75, 1.6);
-  state.reticle.scale.setScalar(5.4 * distScale);
+  const pulse = state.reticlePulseUntil > performance.now() ? 1.2 : 1;
+  state.reticle.scale.setScalar(5.4 * distScale * pulse);
   state.reticle.quaternion.copy(camera.quaternion);
 }
 
 function updateTransforms() {
-  [state.player, state.enemy].forEach((m) => m.root.position.copy(m.body.position));
+  [state.player, state.enemy].forEach((m) => {
+    m.root.position.set(m.body.position.x, m.body.position.y + m.modelYOffset, m.body.position.z);
+    const from = new CANNON.Vec3(m.body.position.x, m.body.position.y + 1.1, m.body.position.z);
+    const to = new CANNON.Vec3(m.body.position.x, m.body.position.y - 6, m.body.position.z);
+    raycastResult.reset();
+    m.grounded = world.raycastClosest(from, to, { collisionFilterMask: -1, skipBackfaces: true }, raycastResult)
+      && raycastResult.body === groundBody
+      && raycastResult.distance <= m.legLength;
+  });
   const pToE = new THREE.Vector3().subVectors(state.enemy.root.position, state.player.root.position).normalize();
   state.player.root.rotation.y = Math.atan2(pToE.x, pToE.z);
   state.enemy.root.rotation.y = Math.atan2(-pToE.x, -pToE.z);
 
   [state.player, state.enemy].forEach((m) => {
     if (performance.now() < m.state.meleeAnimUntil) {
-      m.arms.left.rotation.x = -0.95;
-      m.arms.right.rotation.x = -0.95;
+      m.arms.left.rotation.x = -1.65;
+      m.arms.right.rotation.x = -1.65;
+      m.arms.left.rotation.z = -0.25;
+      m.arms.right.rotation.z = 0.25;
     } else {
       m.arms.left.rotation.x = 0;
       m.arms.right.rotation.x = 0;
+      m.arms.left.rotation.z = 0;
+      m.arms.right.rotation.z = 0;
     }
+    m.root.rotation.x = m.state.action === 'melee-lunge' ? -0.22 : 0;
+    if (performance.now() < m.state.staggerUntil) m.root.rotation.x = 0.18;
+    if (m.state.action === 'melee-lunge' && performance.now() > m.state.meleeLungeUntil) m.state.action = 'idle';
+    if (m.state.action === 'stagger' && performance.now() > m.state.staggerUntil) m.state.action = 'idle';
     if (!['dash', 'rise', 'step'].includes(m.state.action)) return;
     const puff = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 6), new THREE.MeshBasicMaterial({ color: 0x7efbff, transparent: true, opacity: 0.4 }));
     puff.position.copy(m.root.position).add(new THREE.Vector3(0, -1.8, -0.6));
@@ -494,6 +632,7 @@ function updateHud() {
   hudRefs.hp.style.width = `${state.player.state.hp}%`;
   hudRefs.boost.style.width = `${state.player.state.boost}%`;
   hudRefs.boost.style.background = state.player.state.overheatedUntil > performance.now() ? '#ff8c45' : '#90ff63';
+  if (state.speedLines && performance.now() > state.player.state.meleeLungeUntil) state.speedLines.style.opacity = '0';
 }
 
 function cleanupMatch() {
@@ -505,16 +644,20 @@ function cleanupMatch() {
   });
   state.projectiles.forEach((p) => scene.remove(p.mesh));
   state.projectiles.length = 0;
-  if (state.reticle) scene.remove(state.reticle);
+  state.vfx.forEach((vfx) => scene.remove(vfx.mesh));
+  state.vfx.length = 0;
+  if (state.reticle?.parent) state.reticle.parent.remove(state.reticle);
 }
 
 function startMatch() {
   cleanupMatch();
+  renderer.domElement.style.pointerEvents = 'auto';
   state.player = createMech(0x62d7ff, UNIT_DATA[state.playerUnitKey]);
   state.enemy = createMech(0xff7ad5, UNIT_DATA[state.enemyUnitKey]);
-  state.player.body.position.set(-8, 2.8, 0);
-  state.enemy.body.position.set(8, 2.8, 0);
+  state.player.body.position.set(-8, 2.45, 0);
+  state.enemy.body.position.set(8, 2.45, 0);
   state.reticle = makeReticleSprite();
+  state.enemy.torso.add(state.reticle);
   hudRefs = setupHUD();
   state.phase = 'match';
   state.running = true;
@@ -527,27 +670,53 @@ function showSelectMenu() {
   state.phase = 'select';
   state.running = false;
   state.hud?.remove();
+  renderer.domElement.style.pointerEvents = 'none';
 
   const menu = document.createElement('div');
   menu.className = 'menu';
-  menu.innerHTML = `
-    <h2>Select Unit</h2>
-    <button id="u1">${UNIT_DATA.unit1.name}</button>
-    <button id="u2">${UNIT_DATA.unit2.name}</button>
-  `;
+  const unitEntries = Object.entries(UNIT_DATA);
+  const unitButtons = unitEntries.map(([id, unit]) => `<button data-unit="${id}">${unit.name}</button>`).join('');
+  menu.innerHTML = `<h2>Select Unit</h2>${unitButtons}`;
   app.appendChild(menu);
 
-  menu.querySelector('#u1').onclick = () => {
-    state.playerUnitKey = 'unit1';
-    state.enemyUnitKey = 'unit2';
-    startMatch();
-  };
-  menu.querySelector('#u2').onclick = () => {
-    state.playerUnitKey = 'unit2';
-    state.enemyUnitKey = 'unit1';
-    startMatch();
-  };
+  menu.querySelectorAll('button[data-unit]').forEach((button) => {
+    button.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      state.playerUnitKey = button.dataset.unit;
+      const fallbackEnemy = unitEntries.find(([id]) => id !== state.playerUnitKey)?.[0] ?? state.playerUnitKey;
+      state.enemyUnitKey = fallbackEnemy;
+      startMatch();
+    });
+  });
 }
+
+function setupRootTouchAction() {
+  document.documentElement.style.touchAction = 'none';
+  document.body.style.touchAction = 'none';
+  app.style.touchAction = 'none';
+}
+
+window.addEventListener('gesturestart', (e) => e.preventDefault());
+window.addEventListener('gesturechange', (e) => e.preventDefault());
+window.addEventListener('gestureend', (e) => e.preventDefault());
+
+window.addEventListener('dblclick', (e) => {
+  if (!e.target.closest('.menu')) e.preventDefault();
+});
+
+window.addEventListener('touchstart', (e) => {
+  if (!e.target.closest('.menu')) e.preventDefault();
+}, { passive: false });
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+setupRootTouchAction();
+showSelectMenu();
+animate();
 
 function showEndMenu(win) {
   state.phase = 'end';
@@ -562,45 +731,109 @@ function showEndMenu(win) {
   `;
   app.appendChild(menu);
 
-  menu.querySelector('#rematch').onclick = () => startMatch();
-  menu.querySelector('#select').onclick = () => showSelectMenu();
+  menu.querySelector('#rematch').addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    startMatch();
+  });
+  menu.querySelector('#select').addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    showSelectMenu();
+  });
+}
+
+function triggerEnemyEvasion(now) {
+  if (state.enemy.state.hp <= 0 || now <= state.enemy.state.stepCooldownUntil || Math.random() > 0.6) return;
+  const toPlayer = new THREE.Vector3().subVectors(state.player.root.position, state.enemy.root.position).setY(0).normalize();
+  const side = Math.random() > 0.5 ? new THREE.Vector3(-toPlayer.z, 0, toPlayer.x) : new THREE.Vector3(toPlayer.z, 0, -toPlayer.x);
+  const shouldDash = Math.random() > 0.5;
+  if (shouldDash) {
+    state.enemy.body.velocity.x += side.x * 28;
+    state.enemy.body.velocity.z += side.z * 28;
+    state.enemy.state.action = 'dash';
+  } else {
+    state.enemy.body.velocity.x += side.x * 18;
+    state.enemy.body.velocity.z += side.z * 18;
+    state.enemy.state.action = 'step';
+  }
+  state.enemy.state.evadeHomingUntil = now + 260;
+  state.enemy.state.stepCooldownUntil = now + 520;
+}
+
+function triggerDashDefense(now) {
+  state.player.state.dashRecoverUntil = now + 180;
+  if (state.enemy.state.action === 'melee-lunge') {
+    state.enemy.state.action = 'stagger';
+    state.enemy.state.staggerUntil = now + 180;
+    state.enemy.state.meleeLungeUntil = 0;
+  }
+}
+
+function PhaserLikeBetween(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function spawnHitEffect(position, color) {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.4, 0.58, 20),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
+  );
+  ring.position.copy(position).add(new THREE.Vector3(0, 1.4, 0));
+  ring.lookAt(camera.position);
+  scene.add(ring);
+  state.vfx.push({ mesh: ring, life: 0.18, growth: 1.26 });
+}
+
+function spawnMeleeSlash(mech, color) {
+  const slash = new THREE.Mesh(
+    new THREE.TorusGeometry(1.35, 0.08, 8, 32, Math.PI * 0.9),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.75 })
+  );
+  slash.position.copy(mech.root.position).add(new THREE.Vector3(0, 1.1, 1.4));
+  slash.rotation.x = Math.PI / 2.7;
+  slash.rotation.y = mech.root.rotation.y;
+  scene.add(slash);
+  state.vfx.push({ mesh: slash, life: 0.22, growth: 1.12 });
+}
+
+function updateVfx(dt) {
+  state.vfx = state.vfx.filter((vfx) => {
+    vfx.life -= dt;
+    vfx.mesh.material.opacity = Math.max(0, vfx.life * 4);
+    vfx.mesh.scale.multiplyScalar(vfx.growth);
+    if (vfx.life > 0) return true;
+    scene.remove(vfx.mesh);
+    vfx.mesh.geometry.dispose();
+    vfx.mesh.material.dispose();
+    return false;
+  });
 }
 
 const clock = new THREE.Clock();
 function animate() {
-  const dt = Math.min(clock.getDelta(), 1 / 30);
-  const now = performance.now();
+  try {
+    const dt = Math.min(clock.getDelta(), 1 / 30);
+    const now = performance.now();
 
-  if (state.running) {
-    updatePlayer(now);
-    updateEnemy(now);
-    applyRepulsion(now);
-    world.step(1 / 60, dt, 3);
+    if (state.running) {
+      updatePlayer(now);
+      updateEnemy(now);
+      applyRepulsion(now);
+      world.step(1 / 60, dt, 3);
 
-    updateTransforms();
-    updateLocksAndReticle();
-    updateProjectileSystem(dt);
-    updateCamera();
-    updateHud();
+      updateTransforms();
+      updateLocksAndReticle();
+      updateProjectileSystem(dt);
+      updateVfx(dt);
+      updateCamera();
+      updateHud();
 
-    if (state.player.state.hp <= 0 || state.enemy.state.hp <= 0) {
-      showEndMenu(state.enemy.state.hp <= 0);
+      if (state.player.state.hp <= 0 || state.enemy.state.hp <= 0) {
+        showEndMenu(state.enemy.state.hp <= 0);
+      }
     }
+    renderer.render(scene, camera);
+  } catch (error) {
+    console.error('Render loop error:', error);
   }
-
-  renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }
-
-window.addEventListener('touchstart', (e) => {
-  if (e.target.closest('.menu')) return;
-  e.preventDefault();
-}, { passive: false });
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
-
-showSelectMenu();
-animate();
