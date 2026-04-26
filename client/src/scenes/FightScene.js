@@ -1,5 +1,18 @@
 import { io } from 'socket.io-client';
-import { ARENA, MOVE_SET, createFighterState, resolveAction, applyBoostDash, tickFighter } from '@gvg/shared/src/gameLogic.js';
+import {
+  ARENA,
+  BOOST,
+  MOVE_SET,
+  createFighterState,
+  resolveAction,
+  applyBoostDash,
+  applyBoostStep,
+  applyVerticalThrust,
+  tickFighter,
+  createInputBuffer,
+  interpolateSnapshot,
+  getDistance3D
+} from '@gvg/shared/src/gameLogic.js';
 
 export class FightScene extends Phaser.Scene {
   constructor() {
@@ -13,12 +26,12 @@ export class FightScene extends Phaser.Scene {
   }
 
   create() {
-    this.add.rectangle(640, 360, 1280, 720, 0x050714);
+    this.add.rectangle(640, 360, 1280, 720, 0x05070d);
     this.createStage();
 
     this.fighters = {
-      p1: createFighterState('p1', 350, this.playerCharacter.id),
-      p2: createFighterState('p2', 930, this.enemyCharacter.id)
+      p1: createFighterState('p1', 320, 260, this.playerCharacter.id),
+      p2: createFighterState('p2', 940, 620, this.enemyCharacter.id)
     };
 
     this.rigs = {
@@ -27,65 +40,125 @@ export class FightScene extends Phaser.Scene {
     };
 
     this.ui = this.createHud();
-    this.keys = this.input.keyboard.addKeys({
-      left: Phaser.Input.Keyboard.KeyCodes.A,
-      right: Phaser.Input.Keyboard.KeyCodes.D,
-      mainAttack: Phaser.Input.Keyboard.KeyCodes.J,
-      subAttack: Phaser.Input.Keyboard.KeyCodes.K,
-      spAttack: Phaser.Input.Keyboard.KeyCodes.L,
-      mainMelee: Phaser.Input.Keyboard.KeyCodes.U,
-      subMelee: Phaser.Input.Keyboard.KeyCodes.I,
-      spMelee: Phaser.Input.Keyboard.KeyCodes.O,
-      dash: Phaser.Input.Keyboard.KeyCodes.SPACE
-    });
+    this.inputBuffer = createInputBuffer(10);
+    this.touch = this.createTouchControls();
 
     this.socket = null;
     this.interpolationBuffer = [];
     if (this.mode === 'online') this.setupSocket();
 
-    this.time.addEvent({ delay: 500, loop: true, callback: () => this.botThink() });
+    this.time.addEvent({ delay: 430, loop: true, callback: () => this.botThink() });
   }
 
   setupSocket() {
     this.socket = io(import.meta.env.VITE_SERVER_URL || 'http://localhost:3001');
     this.socket.on('match:snapshot', (snapshot) => {
       this.interpolationBuffer.push(snapshot);
-      if (this.interpolationBuffer.length > 4) this.interpolationBuffer.shift();
+      if (this.interpolationBuffer.length > 5) this.interpolationBuffer.shift();
     });
   }
 
   createStage() {
-    const g = this.add.graphics({ lineStyle: { width: 2, color: 0x1ff3ff, alpha: 0.6 } });
-    for (let i = 0; i < 11; i += 1) {
-      g.lineBetween(90 + i * 110, 580, 130 + i * 110, 510);
-    }
-    this.add.text(20, 14, 'Controls: A/D move, SPACE boost dash, J/K/L attacks, U/I/O melee', {
+    const g = this.add.graphics({ lineStyle: { width: 1, color: 0x56f4ff, alpha: 0.35 } });
+    for (let x = 0; x <= ARENA.width; x += 80) g.lineBetween(x, 100, x, 660);
+    for (let y = 100; y <= 660; y += 56) g.lineBetween(0, y, ARENA.width, y);
+    this.add.text(16, 14, '1v1 Lock-On | Left: move / dash | Right: shoot, melee, step, rise, drop', {
       fontSize: '18px',
       color: '#95fffb'
     });
   }
 
   createRig(fighter, color) {
-    const container = this.add.container(fighter.x, fighter.y);
-    const parts = this.add.graphics({ lineStyle: { width: 5, color } });
-    parts.strokeCircle(0, -90, 28);
-    parts.strokeRect(-28, -55, 56, 85);
-    parts.strokeRect(-50, 38, 36, 14);
-    parts.strokeRect(14, 38, 36, 14);
-    parts.strokeRect(-88, -33, 58, 12);
-    parts.strokeRect(30, -33, 58, 12);
+    const container = this.add.container(fighter.x, this.toScreenY(fighter.y, fighter.z));
+    const parts = this.add.graphics({ lineStyle: { width: 4, color } });
+    parts.strokeCircle(0, -74, 20);
+    parts.strokeRect(-24, -44, 48, 72);
+    parts.strokeRect(-42, 34, 30, 10);
+    parts.strokeRect(12, 34, 30, 10);
+    parts.strokeRect(-62, -24, 38, 10);
+    parts.strokeRect(24, -24, 38, 10);
     container.add(parts);
     return container;
   }
 
   createHud() {
-    const p1Bar = this.add.rectangle(220, 50, 320, 24, 0x00f2ff).setOrigin(0, 0.5);
-    const p2Bar = this.add.rectangle(740, 50, 320, 24, 0xff48f5).setOrigin(0, 0.5);
+    const p1Hp = this.add.rectangle(40, 44, 280, 20, 0x21f2ff).setOrigin(0, 0.5);
+    const p2Hp = this.add.rectangle(960, 44, 280, 20, 0xff4eca).setOrigin(0, 0.5);
+    const boostBar = this.add.rectangle(40, 72, 280, 14, 0x82ff6c).setOrigin(0, 0.5);
+
     return {
-      p1Bar,
-      p2Bar,
-      status: this.add.text(580, 82, 'FIGHT', { fontSize: '26px', color: '#fff' })
+      p1Hp,
+      p2Hp,
+      boostBar,
+      status: this.add.text(530, 40, 'LOCKED-ON', { fontSize: '24px', color: '#ffffff' }),
+      distance: this.add.text(530, 68, 'RANGE', { fontSize: '16px', color: '#95fffb' })
     };
+  }
+
+  createTouchControls() {
+    const joystickBase = this.add.circle(110, 610, 78, 0x111824, 0.75).setScrollFactor(0).setDepth(1000);
+    const joystickThumb = this.add.circle(110, 610, 34, 0x56f4ff, 0.9).setScrollFactor(0).setDepth(1001);
+
+    const buttons = {
+      shoot: this.makeButton(1115, 590, 'SHOOT'),
+      melee: this.makeButton(1000, 650, 'MELEE'),
+      boostStep: this.makeButton(1140, 680, 'STEP'),
+      rise: this.makeButton(1030, 530, 'RISE'),
+      drop: this.makeButton(1190, 530, 'DROP')
+    };
+
+    const state = { x: 0, z: 0, isDashGesture: false, pointer: null, lastTap: 0 };
+
+    joystickBase.setInteractive();
+    joystickBase.on('pointerdown', (pointer) => {
+      if (state.pointer && state.pointer.id !== pointer.id) return;
+      const delta = pointer.downTime - state.lastTap;
+      state.isDashGesture = delta < 220;
+      state.lastTap = pointer.downTime;
+      state.pointer = pointer;
+      this.updateJoystick(state, joystickThumb, pointer);
+    });
+
+    this.input.on('pointermove', (pointer) => {
+      if (!state.pointer || pointer.id !== state.pointer.id) return;
+      this.updateJoystick(state, joystickThumb, pointer);
+    });
+
+    this.input.on('pointerup', (pointer) => {
+      if (!state.pointer || pointer.id !== state.pointer.id) return;
+      state.pointer = null;
+      state.x = 0;
+      state.z = 0;
+      state.isDashGesture = false;
+      joystickThumb.x = joystickBase.x;
+      joystickThumb.y = joystickBase.y;
+    });
+
+    buttons.shoot.on('pointerdown', () => this.inputBuffer.push({ type: 'SHOOT' }));
+    buttons.melee.on('pointerdown', () => this.inputBuffer.push({ type: 'MELEE' }));
+    buttons.boostStep.on('pointerdown', () => this.inputBuffer.push({ type: 'BOOST_STEP' }));
+    buttons.rise.on('pointerdown', () => this.inputBuffer.push({ type: 'VERTICAL_THRUST', vertical: 1 }));
+    buttons.drop.on('pointerdown', () => this.inputBuffer.push({ type: 'VERTICAL_THRUST', vertical: -1 }));
+
+    return { state, joystickBase, joystickThumb, buttons };
+  }
+
+  makeButton(x, y, label) {
+    const button = this.add.circle(x, y, 42, 0x1a2735, 0.95).setDepth(1000).setInteractive();
+    this.add.text(x - 24, y - 9, label, { fontSize: '16px', color: '#d8fdff' }).setDepth(1001);
+    return button;
+  }
+
+  updateJoystick(state, thumb, pointer) {
+    const dx = pointer.x - this.touch.joystickBase.x;
+    const dy = pointer.y - this.touch.joystickBase.y;
+    const length = Math.min(58, Math.hypot(dx, dy));
+    const angle = Math.atan2(dy, dx);
+    thumb.x = this.touch.joystickBase.x + Math.cos(angle) * length;
+    thumb.y = this.touch.joystickBase.y + Math.sin(angle) * length;
+
+    state.x = Math.cos(angle) * (length / 58);
+    state.z = Math.sin(angle) * (length / 58);
   }
 
   update(_time, _delta) {
@@ -95,94 +168,146 @@ export class FightScene extends Phaser.Scene {
       return;
     }
 
-    this.handlePlayerInput();
+    this.handleBufferedInputs();
+    this.handleMovement();
 
     tickFighter(this.fighters.p1);
     tickFighter(this.fighters.p2);
 
+    this.applySnapshotInterpolation();
+    this.updateCameraLock();
+    this.renderFighters();
+    this.updateHud();
+  }
+
+  handleMovement() {
+    const move = this.touch.state;
+    if (Math.hypot(move.x, move.z) > 0.15) {
+      this.fighters.p1.vx = move.x * BOOST.cruiseSpeed;
+      this.fighters.p1.vz = move.z * BOOST.cruiseSpeed;
+      this.fighters.p1.facing = move.x >= 0 ? 1 : -1;
+
+      if (move.isDashGesture) {
+        applyBoostDash(this.fighters.p1, move, Date.now());
+        this.socket?.emit('input:action', { type: 'BOOST_DASH', move });
+      }
+    }
+  }
+
+  handleBufferedInputs() {
+    const inputs = this.inputBuffer.flush();
+    const now = Date.now();
+
+    for (const input of inputs) {
+      if (input.type === 'BOOST_STEP') {
+        const ok = applyBoostStep(this.fighters.p1, this.touch.state, now);
+        if (ok) this.socket?.emit('input:action', { type: 'BOOST_STEP', move: this.touch.state });
+        continue;
+      }
+
+      if (input.type === 'VERTICAL_THRUST') {
+        applyVerticalThrust(this.fighters.p1, input.vertical);
+        this.socket?.emit('input:action', { type: 'VERTICAL_THRUST', vertical: input.vertical });
+        continue;
+      }
+
+      const result = resolveAction(this.fighters.p1, this.fighters.p2, input.type, now);
+      this.socket?.emit('input:action', { type: input.type });
+
+      if (result.applied) {
+        this.flash(this.rigs.p2, 0xff3344);
+        this.ui.status.setText(`${MOVE_SET[input.type].name} -${result.damage}`);
+      } else if (result.cut) {
+        this.ui.status.setText('Tracking cut by enemy step');
+      } else {
+        this.ui.status.setText(result.whiff ? `${MOVE_SET[input.type].name} missed` : 'Recovery / cooldown');
+      }
+    }
+  }
+
+  applySnapshotInterpolation() {
+    if (this.mode !== 'online' || this.interpolationBuffer.length < 2) return;
+    const prev = this.interpolationBuffer[this.interpolationBuffer.length - 2];
+    const next = this.interpolationBuffer[this.interpolationBuffer.length - 1];
+    const smoothed = interpolateSnapshot(prev, next, 0.5);
+    if (!smoothed?.fighters) return;
+    this.fighters.p2 = { ...this.fighters.p2, ...smoothed.fighters.p2 };
+  }
+
+  updateCameraLock() {
+    const midX = (this.rigs.p1.x + this.rigs.p2.x) / 2;
+    const midY = (this.rigs.p1.y + this.rigs.p2.y) / 2;
+    const distance = Phaser.Math.Distance.Between(this.rigs.p1.x, this.rigs.p1.y, this.rigs.p2.x, this.rigs.p2.y);
+    const zoom = Phaser.Math.Clamp(1.35 - distance / 1300, 0.85, 1.35);
+
+    this.cameras.main.centerOn(midX, midY);
+    this.cameras.main.setZoom(zoom);
+  }
+
+  renderFighters() {
     this.rigs.p1.x = this.fighters.p1.x;
+    this.rigs.p1.y = this.toScreenY(this.fighters.p1.y, this.fighters.p1.z);
     this.rigs.p2.x = this.fighters.p2.x;
-
-    this.ui.p1Bar.width = 3.2 * this.fighters.p1.health;
-    this.ui.p2Bar.width = 3.2 * this.fighters.p2.health;
+    this.rigs.p2.y = this.toScreenY(this.fighters.p2.y, this.fighters.p2.z);
   }
 
-  handlePlayerInput() {
-    if (this.keys.left.isDown) {
-      this.fighters.p1.vx = -8;
-      this.fighters.p1.facing = -1;
-    }
-    if (this.keys.right.isDown) {
-      this.fighters.p1.vx = 8;
-      this.fighters.p1.facing = 1;
-    }
+  updateHud() {
+    this.ui.p1Hp.width = 2.8 * this.fighters.p1.health;
+    this.ui.p2Hp.width = 2.8 * this.fighters.p2.health;
+    this.ui.boostBar.width = 2.8 * this.fighters.p1.boost;
+    this.ui.boostBar.fillColor = this.fighters.p1.isOverheated ? 0xff8b3d : 0x82ff6c;
 
-    if (Phaser.Input.Keyboard.JustDown(this.keys.dash)) {
-      applyBoostDash(this.fighters.p1, this.fighters.p1.facing, Date.now());
-      this.socket?.emit('input:action', { type: 'BOOST_DASH', direction: this.fighters.p1.facing });
-    }
-
-    this.tryAction(this.keys.mainAttack, 'MAIN_ATTACK');
-    this.tryAction(this.keys.subAttack, 'SUB_ATTACK');
-    this.tryAction(this.keys.spAttack, 'SP_ATTACK');
-    this.tryAction(this.keys.mainMelee, 'MAIN_MELEE');
-    this.tryAction(this.keys.subMelee, 'SUB_MELEE');
-    this.tryAction(this.keys.spMelee, 'SP_MELEE');
+    const dist = getDistance3D(this.fighters.p1, this.fighters.p2);
+    this.ui.distance.setText(`LOCK: ${this.fighters.p1.lockTargetId} | RANGE: ${dist.toFixed(0)} | STATE: ${this.fighters.p1.actionState}`);
   }
 
-  tryAction(key, actionType) {
-    if (!Phaser.Input.Keyboard.JustDown(key)) return;
-
-    const result = resolveAction(this.fighters.p1, this.fighters.p2, actionType, Date.now());
-    if (this.socket) this.socket.emit('input:action', { type: actionType });
-
-    if (result.applied) {
-      this.flash(this.rigs.p2, 0xff3344);
-      this.ui.status.setText(`${MOVE_SET[actionType].name}! -${result.damage}`);
-    } else {
-      this.ui.status.setText(result.whiff ? `${MOVE_SET[actionType].name} missed` : 'Cooling down');
-    }
+  toScreenY(altitude, depth) {
+    return 760 - altitude + depth * 0.17;
   }
 
   botThink() {
     if (this.mode !== 'bot' || this.fighters.p2.isKO) return;
 
     const dx = this.fighters.p1.x - this.fighters.p2.x;
-    this.fighters.p2.facing = dx >= 0 ? 1 : -1;
+    const dz = this.fighters.p1.z - this.fighters.p2.z;
+    const distance = Math.hypot(dx, dz);
 
-    if (Math.abs(dx) > 80) {
-      this.fighters.p2.vx = this.fighters.p2.facing * 7;
+    if (distance > 180) {
+      this.fighters.p2.vx = (dx / distance) * 9;
+      this.fighters.p2.vz = (dz / distance) * 9;
       return;
     }
 
-    const actions = ['MAIN_ATTACK', 'SUB_ATTACK', 'MAIN_MELEE', 'SP_ATTACK'];
+    const actions = ['SHOOT', 'SUB_SHOOT', 'MELEE'];
     const choice = Phaser.Utils.Array.GetRandom(actions);
     const result = resolveAction(this.fighters.p2, this.fighters.p1, choice, Date.now());
     if (result.applied) {
       this.flash(this.rigs.p1, 0xff3344);
-      this.ui.status.setText(`BOT ${MOVE_SET[choice].name}`);
+      this.ui.status.setText(`ENEMY ${MOVE_SET[choice].name}`);
+    } else if (Math.random() > 0.5) {
+      applyBoostStep(this.fighters.p2, { x: -dx, z: -dz }, Date.now());
     }
   }
 
   flash(target, tint) {
     target.list[0].clear();
-    target.list[0].lineStyle(7, tint);
-    target.list[0].strokeCircle(0, -90, 28);
-    target.list[0].strokeRect(-28, -55, 56, 85);
-    target.list[0].strokeRect(-50, 38, 36, 14);
-    target.list[0].strokeRect(14, 38, 36, 14);
-    target.list[0].strokeRect(-88, -33, 58, 12);
-    target.list[0].strokeRect(30, -33, 58, 12);
+    target.list[0].lineStyle(6, tint);
+    target.list[0].strokeCircle(0, -74, 20);
+    target.list[0].strokeRect(-24, -44, 48, 72);
+    target.list[0].strokeRect(-42, 34, 30, 10);
+    target.list[0].strokeRect(12, 34, 30, 10);
+    target.list[0].strokeRect(-62, -24, 38, 10);
+    target.list[0].strokeRect(24, -24, 38, 10);
 
     this.time.delayedCall(100, () => {
       target.list[0].clear();
-      target.list[0].lineStyle(5, target === this.rigs.p1 ? this.playerCharacter.color : this.enemyCharacter.color);
-      target.list[0].strokeCircle(0, -90, 28);
-      target.list[0].strokeRect(-28, -55, 56, 85);
-      target.list[0].strokeRect(-50, 38, 36, 14);
-      target.list[0].strokeRect(14, 38, 36, 14);
-      target.list[0].strokeRect(-88, -33, 58, 12);
-      target.list[0].strokeRect(30, -33, 58, 12);
+      target.list[0].lineStyle(4, target === this.rigs.p1 ? this.playerCharacter.color : this.enemyCharacter.color);
+      target.list[0].strokeCircle(0, -74, 20);
+      target.list[0].strokeRect(-24, -44, 48, 72);
+      target.list[0].strokeRect(-42, 34, 30, 10);
+      target.list[0].strokeRect(12, 34, 30, 10);
+      target.list[0].strokeRect(-62, -24, 38, 10);
+      target.list[0].strokeRect(24, -24, 38, 10);
     });
   }
 }

@@ -11,6 +11,14 @@ new Phaser.Game({
   parent: 'app',
   backgroundColor: '#050714',
   scene: [CharacterSelectScene, FightScene, ResultScene],
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH
+  },
+  input: {
+    activePointers: 5,
+    smoothFactor: 0.2
+  },
   physics: {
     default: 'matter',
     matter: {

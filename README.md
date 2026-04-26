@@ -1,26 +1,27 @@
-# GVG-like 1v1 Neon Fighter (Client-Server)
+# GVG-Style 1v1 Mobile Combat Prototype
 
-This repo ships a **low-latency-ready** architecture for a browser-based 1v1 fighter, focused on **VS Bot** first while keeping interfaces ready for **VS Online**.
+This repo now targets a **mobile-first, Gundam-vs.-Gundam-inspired 1v1 format** with lock-on camera, boost economy, aerial movement, and high-speed cancel-oriented combat.
 
 ## Stack
-- **Client:** Phaser 3 + Matter physics, local prediction-style input handling for dash/attacks.
+- **Client:** Phaser 3 with touch gestures and lock-on pseudo-3D rendering.
 - **Server:** Node.js + Express + Socket.io.
-- **State Sync:** server snapshot broadcast loop (`33ms` / ~30Hz by default).
-- **Shared Logic:** attack resolution, dash, fighter tick in `shared/`.
-- **CI/CD:** GitHub Actions runs tests and can trigger Render deploy hook on `main`.
+- **Shared Logic:** boost / step / overheat / tracking-cut / interpolation in `shared/`.
+- **State Sync:** server snapshot loop (`33ms` / ~30Hz) with interpolation smoothing.
+- **Deploy:** Render free-tier web services (client static + server web).
 
-## Gameplay flow
-1. Enter site
-2. Select 1 of 2 characters (expandable roster)
-3. Fight starts
-4. Match ends on KO
-5. Winner screen with rematch or return to character select
+## Core Gameplay Systems
+- Fixed 1v1 lock-on perspective with camera centered on both units.
+- 3D combat box (`x`, `z`, and altitude `y`) with hover / rise / descent.
+- Shared boost gauge powering dash, step, and vertical thrust.
+- Overheat loop forcing landing-recovery vulnerability.
+- Projectile tracking that can be cut by boost-step invulnerability windows.
+- Melee magnetism that closes distance automatically when in engage range.
+- Cancel windows between core actions for high-speed chaining.
 
-## Controls
-- Move: `A` / `D`
-- Boost Dash: `SPACE`
-- Attack: `J` (main), `K` (sub), `L` (SP)
-- Melee: `U` (main), `I` (sub), `O` (SP)
+## Mobile Controls
+- **Left thumb joystick:** 360° movement.
+- **Double tap + move:** boost dash.
+- **Right action cluster:** Shoot, Melee, Step, Rise, Drop.
 
 ## Local development
 ```bash
@@ -30,7 +31,9 @@ npm run dev
 - Client: http://localhost:5173
 - Server: http://localhost:3001
 
-## Notes for online mode
-- `FightScene` includes Socket.io integration entry points (`setupSocket`, `input:action`, snapshot buffer).
-- Client interpolation buffer is scaffolded for smoothing snapshots.
-- Bot mode currently runs entirely local for responsiveness.
+## Render deploy notes
+`render.yaml` includes:
+- `gvg-server` (`type: web`, free tier)
+- `gvg-client` (`type: static`, free tier)
+
+Push to your connected branch in GitHub, then trigger Render deploy (or enable auto deploy in Render dashboard).

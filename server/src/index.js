@@ -6,8 +6,11 @@ import {
   createFighterState,
   resolveAction,
   applyBoostDash,
+  applyBoostStep,
+  applyVerticalThrust,
   tickFighter,
-  TICK_RATE_MS
+  TICK_RATE_MS,
+  interpolateSnapshot
 } from '@gvg/shared/src/gameLogic.js';
 
 const app = express();
@@ -28,11 +31,11 @@ const io = new Server(server, {
 const lobby = {
   players: new Map(),
   fighters: {
-    p1: createFighterState('p1', 360, 'nova'),
-    p2: createFighterState('p2', 920, 'aegis')
+    p1: createFighterState('p1', 320, 260, 'nova'),
+    p2: createFighterState('p2', 940, 620, 'aegis')
   },
-  startedAt: Date.now(),
-  tick: 0
+  tick: 0,
+  previousSnapshot: null
 };
 
 function broadcastSnapshot() {
@@ -40,11 +43,15 @@ function broadcastSnapshot() {
   tickFighter(lobby.fighters.p2);
   lobby.tick += 1;
 
-  io.emit('match:snapshot', {
+  const snapshot = {
     tick: lobby.tick,
     serverTime: Date.now(),
     fighters: lobby.fighters
-  });
+  };
+
+  const smoothed = interpolateSnapshot(lobby.previousSnapshot, snapshot, 0.65) ?? snapshot;
+  lobby.previousSnapshot = snapshot;
+  io.emit('match:snapshot', smoothed);
 }
 
 setInterval(broadcastSnapshot, TICK_RATE_MS);
@@ -58,7 +65,7 @@ io.on('connection', (socket) => {
     mode: 'online-ready'
   });
 
-  socket.on('input:action', ({ type, direction }) => {
+  socket.on('input:action', ({ type, move, vertical }) => {
     const actorId = lobby.players.get(socket.id);
     if (!actorId) return;
 
@@ -67,7 +74,17 @@ io.on('connection', (socket) => {
     const defender = lobby.fighters[defenderId];
 
     if (type === 'BOOST_DASH') {
-      applyBoostDash(actor, direction ?? actor.facing, Date.now());
+      applyBoostDash(actor, move ?? { x: actor.facing, z: 0 }, Date.now());
+      return;
+    }
+
+    if (type === 'BOOST_STEP') {
+      applyBoostStep(actor, move ?? { x: actor.facing, z: 0 }, Date.now());
+      return;
+    }
+
+    if (type === 'VERTICAL_THRUST') {
+      applyVerticalThrust(actor, vertical ?? 0);
       return;
     }
 

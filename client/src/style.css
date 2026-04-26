@@ -5,13 +5,27 @@
 
 body {
   margin: 0;
-  background: radial-gradient(circle at 20% 10%, #171b3b 0, #090b1a 40%, #03040a 100%);
+  background:
+    linear-gradient(rgba(44, 74, 104, 0.2) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(44, 74, 104, 0.2) 1px, transparent 1px),
+    radial-gradient(circle at 20% 10%, #11172a 0, #090c1b 40%, #03040a 100%);
+  background-size: 30px 30px, 30px 30px, auto;
   overflow: hidden;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 canvas {
   display: block;
-  margin: 0 auto;
+  width: min(100vw, 1280px);
+  height: auto;
+  max-height: 100vh;
   border: 1px solid #15f5ff66;
   box-shadow: 0 0 24px #00f2ff55;
 }
