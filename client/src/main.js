@@ -386,7 +386,7 @@ function updateBoost(mech, now, action) {
   s.action = action;
   const consume = ['dash', 'step', 'rise'].includes(action);
   if (consume) s.boost = Math.max(0, s.boost - 1.1);
-  else if (grounded && now >= s.stackUntil) s.boost = Math.min(100, s.boost + 0.68); // +75% recovery
+  else if (grounded && now >= s.stackUntil) s.boost = Math.min(100, s.boost + 2.04); // 3x faster recovery
 
   if (s.boost <= 0) {
     s.overheatedUntil = now + 1500;
