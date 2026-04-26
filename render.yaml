@@ -6,6 +6,8 @@ services:
     buildCommand: npm install
     startCommand: npm start
     plan: free
+    healthCheckPath: /health
+    autoDeploy: true
 
   - type: web
     name: gvg-client
@@ -13,3 +15,5 @@ services:
     rootDir: client
     buildCommand: npm install && npm run build
     staticPublishPath: dist
+    plan: free
+    autoDeploy: true

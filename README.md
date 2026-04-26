@@ -1,36 +1,32 @@
-# GVG-like 1v1 Neon Fighter (Client-Server)
+# Aegis Brawler -> 3D Follow-Cam Mobile 1v1 Prototype
 
-This repo ships a **low-latency-ready** architecture for a browser-based 1v1 fighter, focused on **VS Bot** first while keeping interfaces ready for **VS Online**.
+This prototype now targets a **third-person over-the-shoulder combat camera** with lock-on tethering for high-speed 1v1 mobile action.
 
-## Stack
-- **Client:** Phaser 3 + Matter physics, local prediction-style input handling for dash/attacks.
-- **Server:** Node.js + Express + Socket.io.
-- **State Sync:** server snapshot broadcast loop (`33ms` / ~30Hz by default).
-- **Shared Logic:** attack resolution, dash, fighter tick in `shared/`.
-- **CI/CD:** GitHub Actions runs tests and can trigger Render deploy hook on `main`.
+## Camera + POV
+- Third-person follow-cam behind player.
+- Hard lock-on framing anchored to player-opponent line.
+- Dynamic focal scaling (close FOV near melee, wider FOV at range).
+- Dash adds temporary FOV expansion for speed sensation.
+- Vertical rise/drop changes camera pitch to preserve opponent + ground readability.
 
-## Gameplay flow
-1. Enter site
-2. Select 1 of 2 characters (expandable roster)
-3. Fight starts
-4. Match ends on KO
-5. Winner screen with rematch or return to character select
+## Combat Feel Layer
+- Hit-stop pulses on successful hits.
+- Heavy impacts and hard landings trigger screen shake.
+- Boost step triggers screen-space distortion flash + trail pulse.
+- KO hit triggers 2s cinematic orbit before result scene.
 
-## Controls
-- Move: `A` / `D`
-- Boost Dash: `SPACE`
-- Attack: `J` (main), `K` (sub), `L` (SP)
-- Melee: `U` (main), `I` (sub), `O` (SP)
+## Mobile UX
+- Transparent dead-zone joystick + translucent action buttons.
+- Diegetic in-world HP/boost bars floating near units.
+- Touch input buffer for rapid cancels.
 
-## Local development
+## Simulation
+- Shared pseudo-3D simulation (x/y/z), boost economy, step tracking-cut, homing projectiles, cancel windows, and melee magnetism.
+- 25ms tick loop with fighter + projectile interpolation for smoother online playback.
+
+## Dev
 ```bash
 npm install
 npm run dev
+npm test
 ```
-- Client: http://localhost:5173
-- Server: http://localhost:3001
-
-## Notes for online mode
-- `FightScene` includes Socket.io integration entry points (`setupSocket`, `input:action`, snapshot buffer).
-- Client interpolation buffer is scaffolded for smoothing snapshots.
-- Bot mode currently runs entirely local for responsiveness.
