@@ -3,11 +3,14 @@ import http from 'node:http';
 import cors from 'cors';
 import { Server } from 'socket.io';
 import {
-  createFighterState,
+  createMatchState,
   resolveAction,
   applyBoostDash,
-  tickFighter,
-  TICK_RATE_MS
+  applyBoostStep,
+  applyVerticalThrust,
+  tickMatch,
+  TICK_RATE_MS,
+  interpolateSnapshot
 } from '@gvg/shared/src/gameLogic.js';
 
 const app = express();
@@ -27,24 +30,28 @@ const io = new Server(server, {
 
 const lobby = {
   players: new Map(),
-  fighters: {
-    p1: createFighterState('p1', 360, 'nova'),
-    p2: createFighterState('p2', 920, 'aegis')
-  },
-  startedAt: Date.now(),
-  tick: 0
+  match: createMatchState(),
+  previousSnapshot: null
 };
 
-function broadcastSnapshot() {
-  tickFighter(lobby.fighters.p1);
-  tickFighter(lobby.fighters.p2);
-  lobby.tick += 1;
+function getSnapshot(now) {
+  return {
+    tick: lobby.match.tick,
+    serverTime: now,
+    fighters: lobby.match.fighters,
+    projectiles: lobby.match.projectiles
+  };
+}
 
-  io.emit('match:snapshot', {
-    tick: lobby.tick,
-    serverTime: Date.now(),
-    fighters: lobby.fighters
-  });
+function broadcastSnapshot() {
+  const now = Date.now();
+  tickMatch(lobby.match, now);
+
+  const snapshot = getSnapshot(now);
+  const smoothed = interpolateSnapshot(lobby.previousSnapshot, snapshot, 0.55) ?? snapshot;
+  lobby.previousSnapshot = snapshot;
+
+  io.emit('match:snapshot', smoothed);
 }
 
 setInterval(broadcastSnapshot, TICK_RATE_MS);
@@ -58,20 +65,20 @@ io.on('connection', (socket) => {
     mode: 'online-ready'
   });
 
-  socket.on('input:action', ({ type, direction }) => {
+  socket.on('input:action', ({ type, move, vertical }) => {
     const actorId = lobby.players.get(socket.id);
     if (!actorId) return;
 
     const defenderId = actorId === 'p1' ? 'p2' : 'p1';
-    const actor = lobby.fighters[actorId];
-    const defender = lobby.fighters[defenderId];
+    const actor = lobby.match.fighters[actorId];
+    const defender = lobby.match.fighters[defenderId];
+    const now = Date.now();
 
-    if (type === 'BOOST_DASH') {
-      applyBoostDash(actor, direction ?? actor.facing, Date.now());
-      return;
-    }
+    if (type === 'BOOST_DASH') return void applyBoostDash(actor, move ?? { x: actor.facing, z: 0 }, now);
+    if (type === 'BOOST_STEP') return void applyBoostStep(actor, move ?? { x: actor.facing, z: 0 }, now);
+    if (type === 'VERTICAL_THRUST') return void applyVerticalThrust(actor, vertical ?? 0, now);
 
-    resolveAction(actor, defender, type, Date.now());
+    resolveAction(actor, defender, type, now, lobby.match.projectiles);
   });
 
   socket.on('disconnect', () => {
