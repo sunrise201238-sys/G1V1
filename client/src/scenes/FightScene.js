@@ -12,6 +12,8 @@ import {
   getDistance3D
 } from '@gvg/shared/src/gameLogic.js';
 
+const INTERPOLATION_BACK_TIME_MS = 100;
+
 export class FightScene extends Phaser.Scene {
   constructor() {
     super('Fight');
@@ -32,10 +34,8 @@ export class FightScene extends Phaser.Scene {
       x: this.match.fighters.p1.x - 220,
       y: this.match.fighters.p1.y + 120,
       z: this.match.fighters.p1.z - 140,
-      yaw: 0,
-      pitch: -0.22,
-      fov: 60,
-      roll: 0
+      lookAt: { ...this.match.fighters.p2 },
+      fov: 60
     };
 
     this.createArena();
@@ -44,16 +44,13 @@ export class FightScene extends Phaser.Scene {
       p2: this.createWireRig(this.enemyCharacter.color)
     };
 
-    this.projectileLayer = this.add.layer();
-    this.trailLayer = this.add.layer();
-    this.diegeticHudLayer = this.add.layer();
-
-    this.ui = this.createDiegeticHud();
+    this.projectileMap = new Map();
+    this.ui = this.createHud();
     this.inputBuffer = createInputBuffer(12);
     this.touch = this.createTouchControls();
 
     this.socket = null;
-    this.interpolationBuffer = [];
+    this.snapshotBuffer = [];
     if (this.mode === 'online') this.setupSocket();
 
     this.isKOSequence = false;
@@ -63,27 +60,17 @@ export class FightScene extends Phaser.Scene {
     this.time.addEvent({ delay: 360, loop: true, callback: () => this.botThink() });
   }
 
-  setupSocket() {
-    this.socket = io(import.meta.env.VITE_SERVER_URL || 'http://localhost:3001');
-    this.socket.on('match:snapshot', (snapshot) => {
-      this.interpolationBuffer.push(snapshot);
-      if (this.interpolationBuffer.length > 6) this.interpolationBuffer.shift();
-    });
-  }
-
   createArena() {
-    this.skyGradient = this.add.graphics();
-    this.skyGradient.fillGradientStyle(0x0d1222, 0x0d1222, 0x1f273a, 0x1f273a, 1);
-    this.skyGradient.fillRect(0, 0, 1280, 720);
+    const sky = this.add.graphics();
+    sky.fillGradientStyle(0x0d1222, 0x0d1222, 0x1f273a, 0x1f273a, 1);
+    sky.fillRect(0, 0, 1280, 720);
 
-    this.floor = this.add.graphics();
-    this.floor.fillStyle(0x291513, 1);
-    this.floor.fillRect(0, 420, 1280, 300);
+    const floor = this.add.graphics();
+    floor.fillStyle(0x291513, 1);
+    floor.fillRect(0, 420, 1280, 300);
 
-    this.floorTexture = this.add.graphics({ lineStyle: { width: 2, color: 0xff7c47, alpha: 0.25 } });
-    for (let i = 0; i < 10; i += 1) {
-      this.floorTexture.lineBetween(0, 460 + i * 24, 1280, 420 + i * 18);
-    }
+    const floorTexture = this.add.graphics({ lineStyle: { width: 2, color: 0xff7c47, alpha: 0.25 } });
+    for (let i = 0; i < 10; i += 1) floorTexture.lineBetween(0, 460 + i * 24, 1280, 420 + i * 18);
   }
 
   createWireRig(color) {
@@ -99,13 +86,14 @@ export class FightScene extends Phaser.Scene {
     return container;
   }
 
-  createDiegeticHud() {
-    const status = this.add.text(512, 26, 'FOLLOW-CAM LOCK', { fontSize: '20px', color: '#d8fcff' });
-    status.setAlpha(0.82).setScrollFactor(0);
+  createHud() {
+    const status = this.add.text(520, 22, 'LOCK-ON ENGAGED', { fontSize: '18px', color: '#d8fcff' }).setAlpha(0.82);
+    const boostBg = this.add.rectangle(640, 690, 320, 10, 0x0a121a, 0.6).setScrollFactor(0);
+    const boostFill = this.add.rectangle(480, 690, 0, 10, 0x90ff63, 0.8).setOrigin(0, 0.5).setScrollFactor(0);
 
     const p1Bar = this.add.graphics().setAlpha(0.72);
     const p2Bar = this.add.graphics().setAlpha(0.72);
-    return { status, p1Bar, p2Bar };
+    return { status, boostBg, boostFill, p1Bar, p2Bar };
   }
 
   createTouchControls() {
@@ -121,11 +109,11 @@ export class FightScene extends Phaser.Scene {
       drop: this.makeButton(1160, 510, 'DROP')
     };
 
-    const state = { x: 0, z: 0, isDashGesture: false, pointer: null, lastTap: 0, boosting: false };
+    const state = { x: 0, z: 0, pointer: null, lastTap: 0, boosting: false, dashGesture: false };
 
     joystickBase.on('pointerdown', (pointer) => {
       if (state.pointer && state.pointer.id !== pointer.id) return;
-      state.isDashGesture = pointer.downTime - state.lastTap < 220;
+      state.dashGesture = pointer.downTime - state.lastTap < 220;
       state.lastTap = pointer.downTime;
       state.pointer = pointer;
       this.updateJoystick(state, joystickBase, joystickThumb, pointer);
@@ -141,7 +129,7 @@ export class FightScene extends Phaser.Scene {
       state.pointer = null;
       state.x = 0;
       state.z = 0;
-      state.isDashGesture = false;
+      state.dashGesture = false;
       joystickThumb.x = joystickBase.x;
       joystickThumb.y = joystickBase.y;
     });
@@ -153,7 +141,6 @@ export class FightScene extends Phaser.Scene {
     buttons.boost.on('pointerup', () => {
       state.boosting = false;
     });
-
     buttons.shoot.on('pointerdown', () => this.inputBuffer.push({ type: 'SHOOT' }));
     buttons.melee.on('pointerdown', () => this.inputBuffer.push({ type: 'MELEE' }));
     buttons.step.on('pointerdown', () => this.inputBuffer.push({ type: 'BOOST_STEP' }));
@@ -180,6 +167,14 @@ export class FightScene extends Phaser.Scene {
     state.z = Math.sin(angle) * (length / 60);
   }
 
+  setupSocket() {
+    this.socket = io(import.meta.env.VITE_SERVER_URL || 'http://localhost:3001');
+    this.socket.on('match:snapshot', (snapshot) => {
+      this.snapshotBuffer.push(snapshot);
+      while (this.snapshotBuffer.length > 20) this.snapshotBuffer.shift();
+    });
+  }
+
   get player() {
     return this.match.fighters.p1;
   }
@@ -197,28 +192,18 @@ export class FightScene extends Phaser.Scene {
     this.handleBufferedInputs();
     this.handleMovement();
 
-    if (this.mode !== 'online') {
-      const hits = tickMatch(this.match, Date.now());
-      if (hits.some((h) => h.targetId === 'p1' || h.targetId === 'p2')) this.hitStop(26);
+    if (this.mode === 'online') {
+      this.applySnapshotInterpolation(Date.now());
+    } else {
+      tickMatch(this.match, Date.now());
     }
-    this.applySnapshotInterpolation();
 
-    this.updateFollowCam(delta);
+    this.updateFollowCam();
     this.renderFighters();
     this.renderProjectiles();
-    this.renderTrails();
-    this.renderDiegeticHud();
+    this.renderDiegeticBars();
+    this.updateHud();
     this.checkKO();
-  }
-
-  handleMovement() {
-    const move = this.touch.state;
-    if (Math.hypot(move.x, move.z) < 0.1 || this.player.isOverheated) return;
-
-    this.player.vx = move.x * BOOST.cruiseSpeed;
-    this.player.vz = move.z * BOOST.cruiseSpeed;
-    this.player.facing = move.x >= 0 ? 1 : -1;
-    if (move.isDashGesture || move.boosting) this.tryDash(move);
   }
 
   handleBufferedInputs() {
@@ -228,57 +213,87 @@ export class FightScene extends Phaser.Scene {
 
     for (const input of inputs) {
       if (input.type === 'BOOST_DASH') {
-        this.tryDash(move);
-        continue;
-      }
-      if (input.type === 'BOOST_STEP') {
-        const stepped = applyBoostStep(this.player, move, now);
-        if (stepped) {
-          this.spawnStepDistortion();
-          this.socket?.emit('input:action', { type: 'BOOST_STEP', move });
-        }
-        continue;
-      }
-      if (input.type === 'VERTICAL_THRUST') {
-        applyVerticalThrust(this.player, input.vertical, now);
-        this.socket?.emit('input:action', { type: 'VERTICAL_THRUST', vertical: input.vertical });
+        if (this.mode === 'online') this.socket?.emit('input:action', { type: 'BOOST_DASH', move });
+        else this.tryDash(move);
         continue;
       }
 
-      const result = resolveAction(this.player, this.enemy, input.type, now, this.match.projectiles);
-      this.socket?.emit('input:action', { type: input.type });
-      if (result.applied) {
-        this.hitStop(40);
-        this.cameras.main.shake(80, 0.006);
+      if (input.type === 'BOOST_STEP') {
+        if (this.mode === 'online') {
+          this.socket?.emit('input:action', { type: 'BOOST_STEP', move });
+        } else {
+          const ok = applyBoostStep(this.player, move, now);
+          if (ok) this.spawnStepDistortion();
+        }
+        continue;
       }
-      if (result.heavy && result.applied) {
-        this.cameras.main.shake(140, 0.012);
-        this.hitStop(70);
+
+      if (input.type === 'VERTICAL_THRUST') {
+        if (this.mode === 'online') this.socket?.emit('input:action', { type: 'VERTICAL_THRUST', vertical: input.vertical });
+        else applyVerticalThrust(this.player, input.vertical, now);
+        continue;
+      }
+
+      if (this.mode === 'online') {
+        this.socket?.emit('input:action', { type: input.type });
+      } else {
+        const result = resolveAction(this.player, this.enemy, input.type, now, this.match.projectiles);
+        if (result.applied) this.cameras.main.shake(70, 0.005);
       }
     }
+  }
+
+  handleMovement() {
+    const move = this.touch.state;
+    if (Math.hypot(move.x, move.z) < 0.1) return;
+
+    if (this.mode === 'online') {
+      this.socket?.emit('input:action', { type: 'MOVE_VECTOR', move });
+      return;
+    }
+
+    if (this.player.isOverheated) return;
+    this.player.vx = move.x * BOOST.cruiseSpeed;
+    this.player.vz = move.z * BOOST.cruiseSpeed;
+    this.player.facing = move.x >= 0 ? 1 : -1;
+    if (move.dashGesture || move.boosting) this.tryDash(move);
   }
 
   tryDash(move) {
     const dashed = applyBoostDash(this.player, move, Date.now());
-    if (dashed) {
-      this.socket?.emit('input:action', { type: 'BOOST_DASH', move });
-      this.spawnDashTrail(this.player, false);
-    }
+    if (dashed) this.spawnDashTrail(this.player, false);
   }
 
-  applySnapshotInterpolation() {
-    if (this.mode !== 'online' || this.interpolationBuffer.length < 2) return;
+  applySnapshotInterpolation(now) {
+    if (this.snapshotBuffer.length === 0) return;
 
-    const prev = this.interpolationBuffer[this.interpolationBuffer.length - 2];
-    const next = this.interpolationBuffer[this.interpolationBuffer.length - 1];
-    const smooth = interpolateSnapshot(prev, next, 0.52);
+    const targetTime = now - INTERPOLATION_BACK_TIME_MS;
+
+    while (this.snapshotBuffer.length >= 2 && this.snapshotBuffer[1].serverTime <= targetTime) {
+      this.snapshotBuffer.shift();
+    }
+
+    if (this.snapshotBuffer.length === 1) {
+      const snap = this.snapshotBuffer[0];
+      this.match.fighters.p1 = { ...this.match.fighters.p1, ...snap.fighters.p1 };
+      this.match.fighters.p2 = { ...this.match.fighters.p2, ...snap.fighters.p2 };
+      this.match.projectiles = snap.projectiles ?? [];
+      return;
+    }
+
+    const prev = this.snapshotBuffer[0];
+    const next = this.snapshotBuffer[1];
+    const span = Math.max(1, next.serverTime - prev.serverTime);
+    const alpha = Phaser.Math.Clamp((targetTime - prev.serverTime) / span, 0, 1);
+    const smooth = interpolateSnapshot(prev, next, alpha);
     if (!smooth) return;
 
+    this.match.fighters.p1 = { ...this.match.fighters.p1, ...smooth.fighters.p1 };
     this.match.fighters.p2 = { ...this.match.fighters.p2, ...smooth.fighters.p2 };
-    this.match.projectiles = smooth.projectiles ?? this.match.projectiles;
+    this.match.projectiles = smooth.projectiles ?? [];
   }
 
-  updateFollowCam(delta) {
+  updateFollowCam() {
     const player = this.player;
     const enemy = this.enemy;
 
@@ -288,144 +303,158 @@ export class FightScene extends Phaser.Scene {
       z: (player.z + enemy.z) / 2
     };
 
+    const playerToEnemy = {
+      x: enemy.x - player.x,
+      y: enemy.y - player.y,
+      z: enemy.z - player.z
+    };
+
     const range = getDistance3D(player, enemy);
-    const meleeFactor = Phaser.Math.Clamp(1 - range / 420, 0, 1);
-    const dashFactor = player.actionState === 'dashing' ? 1 : 0;
+    const meleeFactor = Phaser.Math.Clamp(1 - range / 450, 0, 1);
+    const desiredFov = Phaser.Math.Clamp(75 - meleeFactor * 30 + (player.actionState === 'dashing' ? 6 : 0), 45, 78);
+    this.cameraRig.fov = Phaser.Math.Linear(this.cameraRig.fov, desiredFov, 0.1);
 
-    const desiredFov = Phaser.Math.Clamp(75 - meleeFactor * 30 + dashFactor * 8, 45, 78);
-    this.cameraRig.fov = Phaser.Math.Linear(this.cameraRig.fov, desiredFov, 0.08);
+    const dirLength = Math.max(1, Math.hypot(playerToEnemy.x, playerToEnemy.z));
+    const dirX = playerToEnemy.x / dirLength;
+    const dirZ = playerToEnemy.z / dirLength;
 
-    const desiredPitch = Phaser.Math.Clamp(-0.23 - (player.y - enemy.y) / 1300, -0.48, -0.12);
-    this.cameraRig.pitch = Phaser.Math.Linear(this.cameraRig.pitch, desiredPitch, 0.08);
+    const followDistance = Phaser.Math.Linear(220, 360, Phaser.Math.Clamp(range / 950, 0, 1));
+    const shoulderOffset = 75;
+    const desiredX = player.x - dirX * followDistance + -dirZ * shoulderOffset;
+    const desiredZ = player.z - dirZ * followDistance + dirX * shoulderOffset;
+    const desiredY = player.y + Phaser.Math.Linear(110, 170, Phaser.Math.Clamp(Math.abs(playerToEnemy.y) / 260, 0, 1));
 
-    const desiredYaw = Math.atan2(enemy.z - player.z, enemy.x - player.x);
-    this.cameraRig.yaw = Phaser.Math.Angle.RotateTo(this.cameraRig.yaw, desiredYaw, 0.06);
+    this.cameraRig.x = Phaser.Math.Linear(this.cameraRig.x, desiredX, 0.11);
+    this.cameraRig.y = Phaser.Math.Linear(this.cameraRig.y, desiredY, 0.11);
+    this.cameraRig.z = Phaser.Math.Linear(this.cameraRig.z, desiredZ, 0.11);
 
-    const backDistance = Phaser.Math.Linear(220, 380, Phaser.Math.Clamp(range / 900, 0, 1));
-    const shoulderOffset = 90;
-    const desiredX = player.x - Math.cos(this.cameraRig.yaw) * backDistance + Math.sin(this.cameraRig.yaw) * shoulderOffset;
-    const desiredZ = player.z - Math.sin(this.cameraRig.yaw) * backDistance - Math.cos(this.cameraRig.yaw) * shoulderOffset;
-    const desiredY = player.y + 130;
+    this.cameraRig.lookAt = { ...enemy };
+    this.cameraRig.mid = mid;
+  }
 
-    this.cameraRig.x = Phaser.Math.Linear(this.cameraRig.x, desiredX, 0.12);
-    this.cameraRig.y = Phaser.Math.Linear(this.cameraRig.y, desiredY, 0.12);
-    this.cameraRig.z = Phaser.Math.Linear(this.cameraRig.z, desiredZ, 0.12);
-
-    this.cameraRig.lookAt = mid;
-    this.ui.status.setText(player.isOverheated ? 'OVERHEAT RECOVERY' : 'FOLLOW-CAM LOCK');
-
-    if (Math.abs(player.vy) > 3.4 && player.y <= 72) this.cameras.main.shake(60, 0.004);
-    this.cameras.main.setZoom(1 + (60 - this.cameraRig.fov) / 220);
+  getCameraAngles() {
+    const dx = this.cameraRig.lookAt.x - this.cameraRig.x;
+    const dy = this.cameraRig.lookAt.y - this.cameraRig.y;
+    const dz = this.cameraRig.lookAt.z - this.cameraRig.z;
+    const yaw = Math.atan2(dz, dx);
+    const flat = Math.hypot(dx, dz);
+    const pitch = Math.atan2(dy, flat);
+    return { yaw, pitch };
   }
 
   projectWorldToScreen(world) {
     const cam = this.cameraRig;
+    const { yaw, pitch } = this.getCameraAngles();
     const dx = world.x - cam.x;
     const dy = world.y - cam.y;
     const dz = world.z - cam.z;
 
-    const cosYaw = Math.cos(-cam.yaw);
-    const sinYaw = Math.sin(-cam.yaw);
+    const cosYaw = Math.cos(-yaw);
+    const sinYaw = Math.sin(-yaw);
     const x1 = dx * cosYaw - dz * sinYaw;
     const z1 = dx * sinYaw + dz * cosYaw;
 
-    const cosPitch = Math.cos(-cam.pitch);
-    const sinPitch = Math.sin(-cam.pitch);
+    const cosPitch = Math.cos(-pitch);
+    const sinPitch = Math.sin(-pitch);
     const y2 = dy * cosPitch - z1 * sinPitch;
     const z2 = dy * sinPitch + z1 * cosPitch;
 
     const focal = 650 / Math.tan((cam.fov * Math.PI) / 360);
-    const depth = Math.max(90, z2 + 420);
-    const scale = focal / depth;
+    const depth = Math.max(80, z2 + 420);
+    const scale = Phaser.Math.Clamp((focal / depth) * 1.8, 0.3, 2.2);
 
     return {
       x: 640 + x1 * scale,
       y: 360 + y2 * scale,
-      scale: Phaser.Math.Clamp(scale * 1.8, 0.3, 2.2),
+      scale,
       depth
     };
   }
 
   renderFighters() {
-    const p1Screen = this.projectWorldToScreen(this.player);
-    const p2Screen = this.projectWorldToScreen(this.enemy);
+    const p1 = this.projectWorldToScreen(this.player);
+    const p2 = this.projectWorldToScreen(this.enemy);
 
-    this.rigs.p1.setPosition(p1Screen.x, p1Screen.y).setScale(p1Screen.scale);
-    this.rigs.p2.setPosition(p2Screen.x, p2Screen.y).setScale(p2Screen.scale);
-    this.rigs.p1.setDepth(2000 - p1Screen.depth);
-    this.rigs.p2.setDepth(2000 - p2Screen.depth);
+    this.rigs.p1.setPosition(p1.x, p1.y).setScale(p1.scale).setDepth(2000 - p1.depth);
+    this.rigs.p2.setPosition(p2.x, p2.y).setScale(p2.scale).setDepth(2000 - p2.depth);
   }
 
   renderProjectiles() {
-    this.projectileLayer.removeAll(true);
+    const live = new Set();
+
     for (const projectile of this.match.projectiles) {
-      const p = this.projectWorldToScreen(projectile);
-      const color = projectile.ownerId === 'p1' ? 0x7dfbff : 0xff7de2;
-      const orb = this.add.circle(p.x, p.y, 5 * p.scale, color, 0.9);
-      const trail = this.add.circle(p.x - projectile.vx * 0.25, p.y - projectile.vz * 0.08, 12 * p.scale, color, 0.14);
-      orb.setDepth(2000 - p.depth + 1);
-      trail.setDepth(2000 - p.depth);
-      this.projectileLayer.add([trail, orb]);
+      live.add(projectile.id);
+      const projected = this.projectWorldToScreen(projectile);
+
+      let sprite = this.projectileMap.get(projectile.id);
+      if (!sprite) {
+        const color = projectile.ownerId === 'p1' ? 0x7dfbff : 0xff7de2;
+        sprite = {
+          trail: this.add.circle(projected.x, projected.y, 8, color, 0.14),
+          orb: this.add.circle(projected.x, projected.y, 5, color, 0.9)
+        };
+        this.projectileMap.set(projectile.id, sprite);
+      }
+
+      sprite.orb.setPosition(projected.x, projected.y).setRadius(Math.max(2, 4 * projected.scale));
+      sprite.orb.setDepth(2000 - projected.depth + 1);
+      sprite.trail.setPosition(projected.x - projectile.vx * 0.25, projected.y - projectile.vz * 0.08).setRadius(Math.max(4, 10 * projected.scale));
+      sprite.trail.setDepth(2000 - projected.depth);
+    }
+
+    for (const [id, sprite] of this.projectileMap.entries()) {
+      if (live.has(id)) continue;
+      sprite.orb.destroy();
+      sprite.trail.destroy();
+      this.projectileMap.delete(id);
     }
   }
 
-  renderTrails() {
-    this.trailLayer.removeAll(true);
-    if (this.player.actionState === 'dashing') this.spawnDashTrail(this.player, false);
-    if (this.enemy.actionState === 'dashing') this.spawnDashTrail(this.enemy, true);
-  }
-
-  spawnDashTrail(fighter, enemy) {
-    const p = this.projectWorldToScreen(fighter);
-    const ghost = this.add.circle(p.x, p.y, 20 * p.scale, enemy ? 0xff7de2 : 0x7dfbff, 0.14);
-    ghost.setDepth(2000 - p.depth - 1);
-    this.trailLayer.add(ghost);
-    this.tweens.add({ targets: ghost, alpha: 0, scale: 1.8, duration: 180, onComplete: () => ghost.destroy() });
-  }
-
-  spawnStepDistortion() {
-    const flash = this.add.rectangle(640, 360, 1280, 720, 0xd6f9ff, 0.08).setDepth(5000);
-    this.tweens.add({ targets: flash, alpha: 0, duration: 90, onComplete: () => flash.destroy() });
-    this.cameras.main.shake(70, 0.004);
-  }
-
-  renderDiegeticHud() {
+  renderDiegeticBars() {
     const drawBar = (gfx, fighter, hpColor, boostColor) => {
       const anchor = this.projectWorldToScreen({ x: fighter.x, y: fighter.y + 78, z: fighter.z });
-      const width = 80 * anchor.scale;
+      const width = 90 * anchor.scale;
       const hpWidth = width * (fighter.health / 100);
       const boostWidth = width * (fighter.boost / 100);
       gfx.clear();
-      gfx.fillStyle(0x0a121a, 0.46);
-      gfx.fillRoundedRect(anchor.x - width / 2, anchor.y - 10, width, 7, 3);
+      gfx.fillStyle(0x0a121a, 0.42);
+      gfx.fillRoundedRect(anchor.x - width / 2, anchor.y - 11, width, 7, 3);
       gfx.fillRoundedRect(anchor.x - width / 2, anchor.y, width, 6, 3);
-      gfx.fillStyle(hpColor, 0.88);
-      gfx.fillRoundedRect(anchor.x - width / 2, anchor.y - 10, hpWidth, 7, 3);
-      gfx.fillStyle(boostColor, 0.82);
+      gfx.fillStyle(hpColor, 0.86);
+      gfx.fillRoundedRect(anchor.x - width / 2, anchor.y - 11, hpWidth, 7, 3);
+      gfx.fillStyle(boostColor, 0.78);
       gfx.fillRoundedRect(anchor.x - width / 2, anchor.y, boostWidth, 6, 3);
-      gfx.setDepth(3000);
+      gfx.setDepth(2800);
     };
 
     drawBar(this.ui.p1Bar, this.player, 0x67f4ff, this.player.isOverheated ? 0xff8c45 : 0x90ff63);
     drawBar(this.ui.p2Bar, this.enemy, 0xff74e3, 0x8ec0ff);
   }
 
-  hitStop(durationMs) {
-    this.physics.world?.pause();
-    this.time.timeScale = 0.02;
-    this.time.delayedCall(durationMs, () => {
-      this.time.timeScale = 1;
-      this.physics.world?.resume();
-    });
+  updateHud() {
+    this.ui.status.setText(this.player.isOverheated ? 'LOCK-ON / OVERHEAT' : 'LOCK-ON ENGAGED');
+    this.ui.boostFill.width = 320 * (this.player.boost / 100);
+    this.ui.boostFill.fillColor = this.player.isOverheated ? 0xff8c45 : 0x90ff63;
+  }
+
+  spawnDashTrail(fighter, isEnemy) {
+    const projected = this.projectWorldToScreen(fighter);
+    const ghost = this.add.circle(projected.x, projected.y, 20 * projected.scale, isEnemy ? 0xff7de2 : 0x7dfbff, 0.12);
+    ghost.setDepth(1900 - projected.depth);
+    this.tweens.add({ targets: ghost, alpha: 0, scale: 1.8, duration: 180, onComplete: () => ghost.destroy() });
+  }
+
+  spawnStepDistortion() {
+    const flash = this.add.rectangle(640, 360, 1280, 720, 0xd6f9ff, 0.07).setDepth(5000);
+    this.tweens.add({ targets: flash, alpha: 0, duration: 90, onComplete: () => flash.destroy() });
+    this.cameras.main.shake(60, 0.004);
   }
 
   checkKO() {
-    if (this.player.isKO || this.enemy.isKO) {
-      this.isKOSequence = true;
-      this.koWinner = this.player.isKO ? 'p2' : 'p1';
-      this.koOrbitProgress = 0;
-      this.time.timeScale = 0.35;
-    }
+    if (!this.player.isKO && !this.enemy.isKO) return;
+    this.isKOSequence = true;
+    this.koWinner = this.player.isKO ? 'p2' : 'p1';
+    this.koOrbitProgress = 0;
   }
 
   runKOCinematic(delta) {
@@ -438,23 +467,22 @@ export class FightScene extends Phaser.Scene {
     this.cameraRig.x = winner.x + Math.cos(orbit) * 220;
     this.cameraRig.z = winner.z + Math.sin(orbit) * 220;
     this.cameraRig.y = winner.y + 140;
-    this.cameraRig.yaw = Math.atan2(loser.z - this.cameraRig.z, loser.x - this.cameraRig.x);
-    this.cameraRig.pitch = -0.25;
+    this.cameraRig.lookAt = { ...loser };
     this.cameraRig.fov = 52;
 
     this.renderFighters();
     this.renderProjectiles();
-    this.renderDiegeticHud();
+    this.renderDiegeticBars();
 
-    if (t >= 1) {
-      this.time.timeScale = 1;
-      const winnerCharacter = this.koWinner === 'p1' ? this.playerCharacter : this.enemyCharacter;
-      this.scene.start('Result', { winner: winnerCharacter, playerCharacter: this.playerCharacter, enemyCharacter: this.enemyCharacter });
-    }
+    if (t < 1) return;
+
+    const winnerCharacter = this.koWinner === 'p1' ? this.playerCharacter : this.enemyCharacter;
+    this.scene.start('Result', { winner: winnerCharacter, playerCharacter: this.playerCharacter, enemyCharacter: this.enemyCharacter });
   }
 
   botThink() {
     if (this.mode !== 'bot' || this.enemy.isKO) return;
+
     const dx = this.player.x - this.enemy.x;
     const dz = this.player.z - this.enemy.z;
     const distance = Math.hypot(dx, dz);
@@ -469,10 +497,7 @@ export class FightScene extends Phaser.Scene {
     const actions = ['SHOOT', 'MELEE', 'HEAVY_MELEE'];
     const choice = Phaser.Utils.Array.GetRandom(actions);
     const result = resolveAction(this.enemy, this.player, choice, Date.now(), this.match.projectiles);
-    if (result.applied) {
-      this.hitStop(28);
-      if (result.heavy) this.cameras.main.shake(120, 0.01);
-    }
+    if (result.applied) this.cameras.main.shake(80, result.heavy ? 0.01 : 0.004);
     if (!result.applied && Math.random() > 0.4) applyBoostStep(this.enemy, { x: -dx, z: -dz }, Date.now());
   }
 }

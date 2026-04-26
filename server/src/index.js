@@ -74,6 +74,15 @@ io.on('connection', (socket) => {
     const defender = lobby.match.fighters[defenderId];
     const now = Date.now();
 
+    if (type === 'MOVE_VECTOR') {
+      const mx = move?.x ?? 0;
+      const mz = move?.z ?? 0;
+      actor.vx = mx * 8.8;
+      actor.vz = mz * 8.8;
+      actor.facing = mx >= 0 ? 1 : -1;
+      return;
+    }
+
     if (type === 'BOOST_DASH') return void applyBoostDash(actor, move ?? { x: actor.facing, z: 0 }, now);
     if (type === 'BOOST_STEP') return void applyBoostStep(actor, move ?? { x: actor.facing, z: 0 }, now);
     if (type === 'VERTICAL_THRUST') return void applyVerticalThrust(actor, vertical ?? 0, now);
