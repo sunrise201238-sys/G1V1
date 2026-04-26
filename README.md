@@ -1,36 +1,25 @@
-# GVG-like 1v1 Neon Fighter (Client-Server)
+# Aegis Brawler -> GVG-style Mobile 1v1 Refactor
 
-This repo ships a **low-latency-ready** architecture for a browser-based 1v1 fighter, focused on **VS Bot** first while keeping interfaces ready for **VS Online**.
+This project is now a **mobile-first, pseudo-3D 1v1 action prototype** emphasizing boost movement, lock-on camera behavior, and kinetic combat feedback.
 
-## Stack
-- **Client:** Phaser 3 + Matter physics, local prediction-style input handling for dash/attacks.
-- **Server:** Node.js + Express + Socket.io.
-- **State Sync:** server snapshot broadcast loop (`33ms` / ~30Hz by default).
-- **Shared Logic:** attack resolution, dash, fighter tick in `shared/`.
-- **CI/CD:** GitHub Actions runs tests and can trigger Render deploy hook on `main`.
+## What changed
+- Fixed lock-on camera centered between fighters with dynamic zoom by engagement distance.
+- Pseudo-3D combat box (`x` + `z` + altitude `y`) with rise/drop aerial control.
+- Neon-minimal wireframe units + dark digital void arena for high contrast.
+- Shared boost architecture for dash / step / rise-drop, with hard **1.5s overheat immobilize** when gauge is drained.
+- Projectile induction (homing) that can be cut by boost step.
+- Cancel routes through input buffering and short action cancel windows.
+- Melee magnetism to auto-close gaps in engage range.
+- Ghost trails and camera shake for dash and heavy impact feedback.
+- Faster sync loop (`25ms`) with interpolation over fighter and projectile state.
 
-## Gameplay flow
-1. Enter site
-2. Select 1 of 2 characters (expandable roster)
-3. Fight starts
-4. Match ends on KO
-5. Winner screen with rematch or return to character select
+## Mobile controls
+- **Left:** virtual joystick (360 movement).
+- **Right:** large translucent buttons for Boost, Shoot, Melee, Step, Rise, Drop.
 
-## Controls
-- Move: `A` / `D`
-- Boost Dash: `SPACE`
-- Attack: `J` (main), `K` (sub), `L` (SP)
-- Melee: `U` (main), `I` (sub), `O` (SP)
-
-## Local development
+## Dev
 ```bash
 npm install
 npm run dev
+npm test
 ```
-- Client: http://localhost:5173
-- Server: http://localhost:3001
-
-## Notes for online mode
-- `FightScene` includes Socket.io integration entry points (`setupSocket`, `input:action`, snapshot buffer).
-- Client interpolation buffer is scaffolded for smoothing snapshots.
-- Bot mode currently runs entirely local for responsiveness.

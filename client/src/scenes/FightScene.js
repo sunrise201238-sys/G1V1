@@ -1,5 +1,17 @@
 import { io } from 'socket.io-client';
-import { ARENA, MOVE_SET, createFighterState, resolveAction, applyBoostDash, tickFighter } from '@gvg/shared/src/gameLogic.js';
+import {
+  BOOST,
+  MOVE_SET,
+  createMatchState,
+  resolveAction,
+  applyBoostDash,
+  applyBoostStep,
+  applyVerticalThrust,
+  tickMatch,
+  createInputBuffer,
+  interpolateSnapshot,
+  getDistance3D
+} from '@gvg/shared/src/gameLogic.js';
 
 export class FightScene extends Phaser.Scene {
   constructor() {
@@ -13,176 +25,318 @@ export class FightScene extends Phaser.Scene {
   }
 
   create() {
-    this.add.rectangle(640, 360, 1280, 720, 0x050714);
-    this.createStage();
+    this.match = createMatchState();
+    this.match.fighters.p1.characterId = this.playerCharacter.id;
+    this.match.fighters.p2.characterId = this.enemyCharacter.id;
 
-    this.fighters = {
-      p1: createFighterState('p1', 350, this.playerCharacter.id),
-      p2: createFighterState('p2', 930, this.enemyCharacter.id)
-    };
-
+    this.createDigitalVoid();
     this.rigs = {
-      p1: this.createRig(this.fighters.p1, this.playerCharacter.color),
-      p2: this.createRig(this.fighters.p2, this.enemyCharacter.color)
+      p1: this.createWireRig(this.match.fighters.p1, this.playerCharacter.color),
+      p2: this.createWireRig(this.match.fighters.p2, this.enemyCharacter.color)
     };
+
+    this.projectileLayer = this.add.layer();
+    this.ghostLayer = this.add.layer();
 
     this.ui = this.createHud();
-    this.keys = this.input.keyboard.addKeys({
-      left: Phaser.Input.Keyboard.KeyCodes.A,
-      right: Phaser.Input.Keyboard.KeyCodes.D,
-      mainAttack: Phaser.Input.Keyboard.KeyCodes.J,
-      subAttack: Phaser.Input.Keyboard.KeyCodes.K,
-      spAttack: Phaser.Input.Keyboard.KeyCodes.L,
-      mainMelee: Phaser.Input.Keyboard.KeyCodes.U,
-      subMelee: Phaser.Input.Keyboard.KeyCodes.I,
-      spMelee: Phaser.Input.Keyboard.KeyCodes.O,
-      dash: Phaser.Input.Keyboard.KeyCodes.SPACE
-    });
+    this.inputBuffer = createInputBuffer(10);
+    this.touch = this.createTouchControls();
 
     this.socket = null;
     this.interpolationBuffer = [];
     if (this.mode === 'online') this.setupSocket();
 
-    this.time.addEvent({ delay: 500, loop: true, callback: () => this.botThink() });
+    this.time.addEvent({ delay: 380, loop: true, callback: () => this.botThink() });
   }
 
   setupSocket() {
     this.socket = io(import.meta.env.VITE_SERVER_URL || 'http://localhost:3001');
     this.socket.on('match:snapshot', (snapshot) => {
       this.interpolationBuffer.push(snapshot);
-      if (this.interpolationBuffer.length > 4) this.interpolationBuffer.shift();
+      if (this.interpolationBuffer.length > 6) this.interpolationBuffer.shift();
     });
   }
 
-  createStage() {
-    const g = this.add.graphics({ lineStyle: { width: 2, color: 0x1ff3ff, alpha: 0.6 } });
-    for (let i = 0; i < 11; i += 1) {
-      g.lineBetween(90 + i * 110, 580, 130 + i * 110, 510);
+  createDigitalVoid() {
+    this.add.rectangle(640, 360, 1280, 720, 0x03050c);
+
+    const aura = this.add.graphics();
+    aura.fillStyle(0x53e7ff, 0.08);
+    aura.fillEllipse(340, 380, 460, 220);
+    aura.fillStyle(0xff4fcf, 0.08);
+    aura.fillEllipse(940, 320, 500, 220);
+
+    const horizon = this.add.graphics({ lineStyle: { width: 2, color: 0x4de5ff, alpha: 0.22 } });
+    for (let i = 0; i < 6; i += 1) {
+      horizon.lineBetween(80 + i * 200, 560 - i * 18, 1200 - i * 120, 560 - i * 18);
     }
-    this.add.text(20, 14, 'Controls: A/D move, SPACE boost dash, J/K/L attacks, U/I/O melee', {
-      fontSize: '18px',
-      color: '#95fffb'
-    });
   }
 
-  createRig(fighter, color) {
-    const container = this.add.container(fighter.x, fighter.y);
-    const parts = this.add.graphics({ lineStyle: { width: 5, color } });
-    parts.strokeCircle(0, -90, 28);
-    parts.strokeRect(-28, -55, 56, 85);
-    parts.strokeRect(-50, 38, 36, 14);
-    parts.strokeRect(14, 38, 36, 14);
-    parts.strokeRect(-88, -33, 58, 12);
-    parts.strokeRect(30, -33, 58, 12);
-    container.add(parts);
+  createWireRig(fighter, color) {
+    const container = this.add.container(fighter.x, this.toScreenY(fighter.y, fighter.z));
+    const gfx = this.add.graphics({ lineStyle: { width: 3, color, alpha: 0.96 } });
+
+    gfx.strokeCircle(0, -62, 18);
+    gfx.strokeRoundedRect(-22, -38, 44, 74, 5);
+    gfx.strokeTriangle(-34, -18, -56, 10, -22, 8);
+    gfx.strokeTriangle(34, -18, 56, 10, 22, 8);
+    gfx.strokeRect(-30, 35, 22, 11);
+    gfx.strokeRect(8, 35, 22, 11);
+    gfx.lineStyle(1, color, 0.34);
+    gfx.strokeCircle(0, -62, 24);
+
+    container.add(gfx);
     return container;
   }
 
   createHud() {
-    const p1Bar = this.add.rectangle(220, 50, 320, 24, 0x00f2ff).setOrigin(0, 0.5);
-    const p2Bar = this.add.rectangle(740, 50, 320, 24, 0xff48f5).setOrigin(0, 0.5);
+    const p1Hp = this.add.rectangle(44, 42, 280, 16, 0x2befff).setOrigin(0, 0.5).setScrollFactor(0);
+    const p2Hp = this.add.rectangle(956, 42, 280, 16, 0xff53d5).setOrigin(0, 0.5).setScrollFactor(0);
+    const boostBar = this.add.rectangle(44, 66, 280, 12, 0x8fff62).setOrigin(0, 0.5).setScrollFactor(0);
     return {
-      p1Bar,
-      p2Bar,
-      status: this.add.text(580, 82, 'FIGHT', { fontSize: '26px', color: '#fff' })
+      p1Hp,
+      p2Hp,
+      boostBar,
+      status: this.add.text(528, 28, 'LOCK-ON ENGAGED', { fontSize: '20px', color: '#f4ffff' }).setScrollFactor(0),
+      detail: this.add.text(506, 54, '', { fontSize: '14px', color: '#93f9ff' }).setScrollFactor(0)
     };
   }
 
-  update(_time, _delta) {
-    if (this.fighters.p1.isKO || this.fighters.p2.isKO) {
-      const winner = this.fighters.p1.isKO ? this.enemyCharacter : this.playerCharacter;
+  createTouchControls() {
+    const joystickBase = this.add.circle(116, 608, 80, 0x1c2430, 0.45).setScrollFactor(0).setDepth(1000);
+    const joystickThumb = this.add.circle(116, 608, 34, 0x6ff5ff, 0.75).setScrollFactor(0).setDepth(1001);
+
+    const buttons = {
+      boost: this.makeButton(1036, 640, 'BOOST'),
+      shoot: this.makeButton(1160, 600, 'SHOOT'),
+      melee: this.makeButton(938, 678, 'MELEE'),
+      step: this.makeButton(1160, 694, 'STEP'),
+      rise: this.makeButton(1036, 540, 'RISE'),
+      drop: this.makeButton(1160, 510, 'DROP')
+    };
+
+    const state = { x: 0, z: 0, isDashGesture: false, pointer: null, lastTap: 0, boosting: false };
+
+    joystickBase.setInteractive();
+    joystickBase.on('pointerdown', (pointer) => {
+      if (state.pointer && state.pointer.id !== pointer.id) return;
+      state.isDashGesture = pointer.downTime - state.lastTap < 200;
+      state.lastTap = pointer.downTime;
+      state.pointer = pointer;
+      this.updateJoystick(state, joystickBase, joystickThumb, pointer);
+    });
+
+    this.input.on('pointermove', (pointer) => {
+      if (!state.pointer || pointer.id !== state.pointer.id) return;
+      this.updateJoystick(state, joystickBase, joystickThumb, pointer);
+    });
+
+    this.input.on('pointerup', (pointer) => {
+      if (!state.pointer || pointer.id !== state.pointer.id) return;
+      state.pointer = null;
+      state.x = 0;
+      state.z = 0;
+      state.isDashGesture = false;
+      joystickThumb.x = joystickBase.x;
+      joystickThumb.y = joystickBase.y;
+    });
+
+    buttons.boost.on('pointerdown', () => {
+      state.boosting = true;
+      this.inputBuffer.push({ type: 'BOOST_DASH' });
+    });
+    buttons.boost.on('pointerup', () => {
+      state.boosting = false;
+    });
+    buttons.shoot.on('pointerdown', () => this.inputBuffer.push({ type: 'SHOOT' }));
+    buttons.melee.on('pointerdown', () => this.inputBuffer.push({ type: 'MELEE' }));
+    buttons.step.on('pointerdown', () => this.inputBuffer.push({ type: 'BOOST_STEP' }));
+    buttons.rise.on('pointerdown', () => this.inputBuffer.push({ type: 'VERTICAL_THRUST', vertical: 1 }));
+    buttons.drop.on('pointerdown', () => this.inputBuffer.push({ type: 'VERTICAL_THRUST', vertical: -1 }));
+
+    return { state };
+  }
+
+  makeButton(x, y, label) {
+    const button = this.add.circle(x, y, 48, 0x99efff, 0.2).setDepth(1000).setScrollFactor(0).setInteractive();
+    this.add.text(x - 23, y - 7, label, { fontSize: '13px', color: '#d9f9ff' }).setDepth(1001).setScrollFactor(0);
+    return button;
+  }
+
+  updateJoystick(state, base, thumb, pointer) {
+    const dx = pointer.x - base.x;
+    const dy = pointer.y - base.y;
+    const length = Math.min(58, Math.hypot(dx, dy));
+    const angle = Math.atan2(dy, dx);
+    thumb.x = base.x + Math.cos(angle) * length;
+    thumb.y = base.y + Math.sin(angle) * length;
+    state.x = Math.cos(angle) * (length / 58);
+    state.z = Math.sin(angle) * (length / 58);
+  }
+
+  get player() {
+    return this.match.fighters.p1;
+  }
+
+  get enemy() {
+    return this.match.fighters.p2;
+  }
+
+  update() {
+    if (this.player.isKO || this.enemy.isKO) {
+      const winner = this.player.isKO ? this.enemyCharacter : this.playerCharacter;
       this.scene.start('Result', { winner, playerCharacter: this.playerCharacter, enemyCharacter: this.enemyCharacter });
       return;
     }
 
-    this.handlePlayerInput();
+    this.handleBufferedInputs();
+    this.handleMovement();
 
-    tickFighter(this.fighters.p1);
-    tickFighter(this.fighters.p2);
+    if (this.mode !== 'online') tickMatch(this.match, Date.now());
+    this.applySnapshotInterpolation();
 
-    this.rigs.p1.x = this.fighters.p1.x;
-    this.rigs.p2.x = this.fighters.p2.x;
-
-    this.ui.p1Bar.width = 3.2 * this.fighters.p1.health;
-    this.ui.p2Bar.width = 3.2 * this.fighters.p2.health;
+    this.updateCameraLock();
+    this.renderFighters();
+    this.renderProjectiles();
+    this.renderGhosting();
+    this.updateHud();
   }
 
-  handlePlayerInput() {
-    if (this.keys.left.isDown) {
-      this.fighters.p1.vx = -8;
-      this.fighters.p1.facing = -1;
+  handleMovement() {
+    const move = this.touch.state;
+    if (Math.hypot(move.x, move.z) > 0.1 && !this.player.isOverheated) {
+      this.player.vx = move.x * BOOST.cruiseSpeed;
+      this.player.vz = move.z * BOOST.cruiseSpeed;
+      this.player.facing = move.x >= 0 ? 1 : -1;
+      if (move.isDashGesture || move.boosting) this.tryDash(move);
     }
-    if (this.keys.right.isDown) {
-      this.fighters.p1.vx = 8;
-      this.fighters.p1.facing = 1;
-    }
-
-    if (Phaser.Input.Keyboard.JustDown(this.keys.dash)) {
-      applyBoostDash(this.fighters.p1, this.fighters.p1.facing, Date.now());
-      this.socket?.emit('input:action', { type: 'BOOST_DASH', direction: this.fighters.p1.facing });
-    }
-
-    this.tryAction(this.keys.mainAttack, 'MAIN_ATTACK');
-    this.tryAction(this.keys.subAttack, 'SUB_ATTACK');
-    this.tryAction(this.keys.spAttack, 'SP_ATTACK');
-    this.tryAction(this.keys.mainMelee, 'MAIN_MELEE');
-    this.tryAction(this.keys.subMelee, 'SUB_MELEE');
-    this.tryAction(this.keys.spMelee, 'SP_MELEE');
   }
 
-  tryAction(key, actionType) {
-    if (!Phaser.Input.Keyboard.JustDown(key)) return;
+  handleBufferedInputs() {
+    const now = Date.now();
+    const move = this.touch.state;
+    const inputs = this.inputBuffer.flush();
 
-    const result = resolveAction(this.fighters.p1, this.fighters.p2, actionType, Date.now());
-    if (this.socket) this.socket.emit('input:action', { type: actionType });
+    for (const input of inputs) {
+      if (input.type === 'BOOST_DASH') {
+        this.tryDash(move);
+        continue;
+      }
 
-    if (result.applied) {
-      this.flash(this.rigs.p2, 0xff3344);
-      this.ui.status.setText(`${MOVE_SET[actionType].name}! -${result.damage}`);
-    } else {
-      this.ui.status.setText(result.whiff ? `${MOVE_SET[actionType].name} missed` : 'Cooling down');
+      if (input.type === 'BOOST_STEP') {
+        const stepped = applyBoostStep(this.player, move, now);
+        if (stepped) this.spawnStepPulse(this.player);
+        this.socket?.emit('input:action', { type: 'BOOST_STEP', move });
+        continue;
+      }
+
+      if (input.type === 'VERTICAL_THRUST') {
+        applyVerticalThrust(this.player, input.vertical, now);
+        this.socket?.emit('input:action', { type: 'VERTICAL_THRUST', vertical: input.vertical });
+        continue;
+      }
+
+      const result = resolveAction(this.player, this.enemy, input.type, now, this.match.projectiles);
+      this.socket?.emit('input:action', { type: input.type });
+      if (result.heavy && result.applied) this.cameras.main.shake(90, 0.008);
     }
+  }
+
+  tryDash(move) {
+    const dashed = applyBoostDash(this.player, move, Date.now());
+    if (dashed) {
+      this.socket?.emit('input:action', { type: 'BOOST_DASH', move });
+      this.spawnDashTrail(this.player);
+    }
+  }
+
+  applySnapshotInterpolation() {
+    if (this.mode !== 'online' || this.interpolationBuffer.length < 2) return;
+    const prev = this.interpolationBuffer[this.interpolationBuffer.length - 2];
+    const next = this.interpolationBuffer[this.interpolationBuffer.length - 1];
+    const smooth = interpolateSnapshot(prev, next, 0.5);
+    if (!smooth) return;
+
+    this.match.fighters.p2 = { ...this.match.fighters.p2, ...smooth.fighters.p2 };
+    this.match.projectiles = smooth.projectiles ?? this.match.projectiles;
+  }
+
+  updateCameraLock() {
+    const midX = (this.rigs.p1.x + this.rigs.p2.x) / 2;
+    const midY = (this.rigs.p1.y + this.rigs.p2.y) / 2;
+    const distance = Phaser.Math.Distance.Between(this.rigs.p1.x, this.rigs.p1.y, this.rigs.p2.x, this.rigs.p2.y);
+    const zoom = Phaser.Math.Clamp(1.35 - distance / 900, 0.8, 1.45);
+    this.cameras.main.centerOn(midX, midY);
+    this.cameras.main.setZoom(zoom);
+  }
+
+  renderFighters() {
+    this.rigs.p1.x = this.player.x;
+    this.rigs.p1.y = this.toScreenY(this.player.y, this.player.z);
+    this.rigs.p2.x = this.enemy.x;
+    this.rigs.p2.y = this.toScreenY(this.enemy.y, this.enemy.z);
+  }
+
+  renderProjectiles() {
+    this.projectileLayer.removeAll(true);
+    for (const projectile of this.match.projectiles) {
+      const y = this.toScreenY(projectile.y, projectile.z);
+      const orb = this.add.circle(projectile.x, y, 6, projectile.ownerId === 'p1' ? 0x7efbff : 0xff7de1, 0.88);
+      const trail = this.add.circle(projectile.x - projectile.vx * 0.7, y - projectile.vz * 0.14, 12, orb.fillColor, 0.16);
+      this.projectileLayer.add([trail, orb]);
+    }
+  }
+
+  renderGhosting() {
+    this.ghostLayer.removeAll(true);
+    if (this.player.actionState === 'dashing') this.spawnDashTrail(this.player);
+    if (this.enemy.actionState === 'dashing') this.spawnDashTrail(this.enemy, true);
+  }
+
+  spawnDashTrail(fighter, isEnemy = false) {
+    const ghost = this.add.circle(fighter.x, this.toScreenY(fighter.y, fighter.z), 18, isEnemy ? 0xff7de1 : 0x7efbff, 0.12);
+    this.ghostLayer.add(ghost);
+    this.tweens.add({ targets: ghost, alpha: 0, scale: 1.8, duration: 180, onComplete: () => ghost.destroy() });
+  }
+
+  spawnStepPulse(fighter) {
+    const pulse = this.add.circle(fighter.x, this.toScreenY(fighter.y, fighter.z), 10, 0xf4ffff, 0.3);
+    this.tweens.add({ targets: pulse, alpha: 0, scale: 5, duration: 120, onComplete: () => pulse.destroy() });
+  }
+
+  updateHud() {
+    this.ui.p1Hp.width = 2.8 * this.player.health;
+    this.ui.p2Hp.width = 2.8 * this.enemy.health;
+    this.ui.boostBar.width = 2.8 * this.player.boost;
+    this.ui.boostBar.fillColor = this.player.isOverheated ? 0xff7b37 : 0x8fff62;
+
+    const range = getDistance3D(this.player, this.enemy);
+    this.ui.detail.setText(`RANGE ${range.toFixed(0)} | BOOST ${this.player.boost.toFixed(0)} | ${this.player.actionState.toUpperCase()}`);
+    if (this.player.isOverheated) this.ui.status.setText('OVERHEAT: IMMOBILIZED 1.5s');
+    else this.ui.status.setText('LOCK-ON ENGAGED');
+  }
+
+  toScreenY(altitude, depth) {
+    return 760 - altitude + depth * 0.17;
   }
 
   botThink() {
-    if (this.mode !== 'bot' || this.fighters.p2.isKO) return;
+    if (this.mode !== 'bot' || this.enemy.isKO) return;
+    const dx = this.player.x - this.enemy.x;
+    const dz = this.player.z - this.enemy.z;
+    const distance = Math.hypot(dx, dz);
 
-    const dx = this.fighters.p1.x - this.fighters.p2.x;
-    this.fighters.p2.facing = dx >= 0 ? 1 : -1;
-
-    if (Math.abs(dx) > 80) {
-      this.fighters.p2.vx = this.fighters.p2.facing * 7;
+    if (distance > 230) {
+      this.enemy.vx = (dx / distance) * 9;
+      this.enemy.vz = (dz / distance) * 9;
+      if (Math.random() > 0.65) applyBoostDash(this.enemy, { x: dx / distance, z: dz / distance }, Date.now());
       return;
     }
 
-    const actions = ['MAIN_ATTACK', 'SUB_ATTACK', 'MAIN_MELEE', 'SP_ATTACK'];
+    const actions = ['SHOOT', 'MELEE', 'HEAVY_MELEE'];
     const choice = Phaser.Utils.Array.GetRandom(actions);
-    const result = resolveAction(this.fighters.p2, this.fighters.p1, choice, Date.now());
-    if (result.applied) {
-      this.flash(this.rigs.p1, 0xff3344);
-      this.ui.status.setText(`BOT ${MOVE_SET[choice].name}`);
-    }
-  }
-
-  flash(target, tint) {
-    target.list[0].clear();
-    target.list[0].lineStyle(7, tint);
-    target.list[0].strokeCircle(0, -90, 28);
-    target.list[0].strokeRect(-28, -55, 56, 85);
-    target.list[0].strokeRect(-50, 38, 36, 14);
-    target.list[0].strokeRect(14, 38, 36, 14);
-    target.list[0].strokeRect(-88, -33, 58, 12);
-    target.list[0].strokeRect(30, -33, 58, 12);
-
-    this.time.delayedCall(100, () => {
-      target.list[0].clear();
-      target.list[0].lineStyle(5, target === this.rigs.p1 ? this.playerCharacter.color : this.enemyCharacter.color);
-      target.list[0].strokeCircle(0, -90, 28);
-      target.list[0].strokeRect(-28, -55, 56, 85);
-      target.list[0].strokeRect(-50, 38, 36, 14);
-      target.list[0].strokeRect(14, 38, 36, 14);
-      target.list[0].strokeRect(-88, -33, 58, 12);
-      target.list[0].strokeRect(30, -33, 58, 12);
-    });
+    const result = resolveAction(this.enemy, this.player, choice, Date.now(), this.match.projectiles);
+    if (choice === 'HEAVY_MELEE' && result.applied) this.cameras.main.shake(120, 0.01);
+    if (!result.applied && Math.random() > 0.4) applyBoostStep(this.enemy, { x: -dx, z: -dz }, Date.now());
   }
 }
