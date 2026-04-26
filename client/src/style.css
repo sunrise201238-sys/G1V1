@@ -1,17 +1,20 @@
-:root {
-  color-scheme: dark;
-  font-family: Inter, system-ui, sans-serif;
-}
+:root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+body { margin: 0; overflow: hidden; background: #06090f; touch-action: none !important; }
+#app { width: 100vw; height: 100vh; position: relative; }
+canvas { display: block; width: 100%; height: 100%; touch-action: none !important; }
 
-body {
-  margin: 0;
-  background: radial-gradient(circle at 20% 10%, #171b3b 0, #090b1a 40%, #03040a 100%);
-  overflow: hidden;
-}
+.touch-hud { position: absolute; inset: 0; pointer-events: none; }
+.health { position: absolute; top: 14px; left: 16px; width: 180px; height: 10px; background: rgba(12, 18, 28, 0.6); border-radius: 999px; overflow: hidden; }
+#health-fill { width: 100%; height: 100%; background: #ff6d8f; }
+.boost { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); width: 38vw; max-width: 340px; height: 8px; background: rgba(12, 18, 28, 0.6); border-radius: 999px; overflow: hidden; }
+#boost-fill { height: 100%; width: 100%; background: #90ff63; }
 
-canvas {
-  display: block;
-  margin: 0 auto;
-  border: 1px solid #15f5ff66;
-  box-shadow: 0 0 24px #00f2ff55;
-}
+.joy { position: absolute; left: 28px; bottom: 28px; width: 140px; height: 140px; border-radius: 50%; background: rgba(160, 200, 220, 0.15); pointer-events: auto; }
+.stick { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin-left: -28px; margin-top: -28px; border-radius: 50%; background: rgba(240, 252, 255, 0.35); }
+
+.buttons { position: absolute; right: 22px; bottom: 18px; width: 240px; display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 10px; pointer-events: auto; }
+.buttons button { border: 0; border-radius: 999px; padding: 12px 0; color: #dcf9ff; background: rgba(146, 207, 230, 0.2); font-weight: 700; }
+
+.menu { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgba(5, 8, 14, 0.78); z-index: 20; }
+.menu h2 { margin: 0 0 8px; color: #d7f6ff; }
+.menu button { width: 260px; padding: 14px 10px; border-radius: 10px; border: 1px solid #4c6176; background: #1a2634; color: #e5fbff; }
