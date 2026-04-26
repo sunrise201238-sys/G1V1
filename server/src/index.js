@@ -3,11 +3,15 @@ import http from 'node:http';
 import cors from 'cors';
 import { Server } from 'socket.io';
 import {
-  createFighterState,
+  BOOST,
+  createMatchState,
   resolveAction,
   applyBoostDash,
-  tickFighter,
-  TICK_RATE_MS
+  applyBoostStep,
+  applyVerticalThrust,
+  tickMatch,
+  TICK_RATE_MS,
+  interpolateSnapshot
 } from '@gvg/shared/src/gameLogic.js';
 
 const app = express();
@@ -27,24 +31,77 @@ const io = new Server(server, {
 
 const lobby = {
   players: new Map(),
-  fighters: {
-    p1: createFighterState('p1', 360, 'nova'),
-    p2: createFighterState('p2', 920, 'aegis')
-  },
-  startedAt: Date.now(),
-  tick: 0
+  match: createMatchState(),
+  previousSnapshot: null,
+  pendingInputs: new Map()
 };
 
-function broadcastSnapshot() {
-  tickFighter(lobby.fighters.p1);
-  tickFighter(lobby.fighters.p2);
-  lobby.tick += 1;
+function enqueueInput(actorId, payload) {
+  if (!lobby.pendingInputs.has(actorId)) lobby.pendingInputs.set(actorId, []);
+  const queue = lobby.pendingInputs.get(actorId);
+  queue.push(payload);
+  if (queue.length > 30) queue.splice(0, queue.length - 30);
+}
 
-  io.emit('match:snapshot', {
-    tick: lobby.tick,
-    serverTime: Date.now(),
-    fighters: lobby.fighters
-  });
+function applyQueuedInputs(now) {
+  for (const [actorId, queue] of lobby.pendingInputs.entries()) {
+    const actor = lobby.match.fighters[actorId];
+    const defender = lobby.match.fighters[actorId === 'p1' ? 'p2' : 'p1'];
+    if (!actor || !defender || queue.length === 0) continue;
+
+    let latestMove = null;
+
+    for (const { type, move, vertical } of queue) {
+      if (type === 'MOVE_VECTOR') {
+        latestMove = move;
+        continue;
+      }
+      if (type === 'BOOST_DASH') {
+        applyBoostDash(actor, move ?? { x: actor.facing, z: 0 }, now);
+        continue;
+      }
+      if (type === 'BOOST_STEP') {
+        applyBoostStep(actor, move ?? { x: actor.facing, z: 0 }, now);
+        continue;
+      }
+      if (type === 'VERTICAL_THRUST') {
+        applyVerticalThrust(actor, vertical ?? 0, now);
+        continue;
+      }
+      resolveAction(actor, defender, type, now, lobby.match.projectiles);
+    }
+
+    if (latestMove) {
+      const mx = latestMove.x ?? 0;
+      const mz = latestMove.z ?? 0;
+      actor.vx = mx * BOOST.cruiseSpeed;
+      actor.vz = mz * BOOST.cruiseSpeed;
+      actor.facing = mx >= 0 ? 1 : -1;
+    }
+
+    queue.length = 0;
+  }
+}
+
+function getSnapshot(now) {
+  return {
+    tick: lobby.match.tick,
+    serverTime: now,
+    fighters: lobby.match.fighters,
+    projectiles: lobby.match.projectiles
+  };
+}
+
+function broadcastSnapshot() {
+  const now = Date.now();
+  applyQueuedInputs(now);
+  tickMatch(lobby.match, now);
+
+  const snapshot = getSnapshot(now);
+  const smoothed = interpolateSnapshot(lobby.previousSnapshot, snapshot, 0.55) ?? snapshot;
+  lobby.previousSnapshot = snapshot;
+
+  io.emit('match:snapshot', smoothed);
 }
 
 setInterval(broadcastSnapshot, TICK_RATE_MS);
@@ -58,24 +115,16 @@ io.on('connection', (socket) => {
     mode: 'online-ready'
   });
 
-  socket.on('input:action', ({ type, direction }) => {
+  socket.on('input:action', ({ type, move, vertical }) => {
     const actorId = lobby.players.get(socket.id);
     if (!actorId) return;
-
-    const defenderId = actorId === 'p1' ? 'p2' : 'p1';
-    const actor = lobby.fighters[actorId];
-    const defender = lobby.fighters[defenderId];
-
-    if (type === 'BOOST_DASH') {
-      applyBoostDash(actor, direction ?? actor.facing, Date.now());
-      return;
-    }
-
-    resolveAction(actor, defender, type, Date.now());
+    enqueueInput(actorId, { type, move, vertical });
   });
 
   socket.on('disconnect', () => {
+    const actorId = lobby.players.get(socket.id);
     lobby.players.delete(socket.id);
+    if (actorId) lobby.pendingInputs.delete(actorId);
   });
 });
 
