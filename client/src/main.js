@@ -34,6 +34,9 @@ const state = {
   projectiles: [],
   hud: null,
   reticle: null,
+  speedLines: null,
+  reticlePulseUntil: 0,
+  reticleWasRed: false,
   running: false,
   matchStartAt: 0
 };
@@ -55,26 +58,40 @@ scene.add(key);
 const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -18, 0) });
 world.broadphase = new CANNON.SAPBroadphase(world);
 world.allowSleep = true;
-const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
-groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Box(new CANNON.Vec3(140, 0.25, 140)) });
+groundBody.position.set(0, -0.25, 0);
 world.addBody(groundBody);
 
 const gridCanvas = document.createElement('canvas');
 gridCanvas.width = 512;
 gridCanvas.height = 512;
 const ctx = gridCanvas.getContext('2d');
-ctx.fillStyle = '#1c2230';
+ctx.fillStyle = '#141b27';
 ctx.fillRect(0, 0, 512, 512);
-ctx.strokeStyle = '#3d4b64';
-ctx.lineWidth = 2;
-for (let i = 0; i < 16; i += 1) {
+ctx.strokeStyle = '#4f6387';
+ctx.lineWidth = 2.5;
+for (let i = 0; i < 32; i += 1) {
+  const p = i * 16;
   ctx.beginPath();
-  ctx.moveTo(i * 32, 0);
-  ctx.lineTo(i * 32, 512);
+  ctx.moveTo(p, 0);
+  ctx.lineTo(p, 512);
   ctx.stroke();
   ctx.beginPath();
-  ctx.moveTo(0, i * 32);
-  ctx.lineTo(512, i * 32);
+  ctx.moveTo(0, p);
+  ctx.lineTo(512, p);
+  ctx.stroke();
+}
+ctx.strokeStyle = '#8ca0ca';
+ctx.lineWidth = 3.5;
+for (let i = 0; i < 9; i += 1) {
+  const p = i * 64;
+  ctx.beginPath();
+  ctx.moveTo(p, 0);
+  ctx.lineTo(p, 512);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, p);
+  ctx.lineTo(512, p);
   ctx.stroke();
 }
 const gridTex = new THREE.CanvasTexture(gridCanvas);
@@ -138,6 +155,11 @@ function createMech(color, unitData) {
       overheatedUntil: 0,
       hitStunUntil: 0,
       meleeAnimUntil: 0,
+      meleeLungeUntil: 0,
+      staggerUntil: 0,
+      evadeHomingUntil: 0,
+      stepCooldownUntil: 0,
+      vulnerabilityMove: false,
       stackUntil: 0,
       lastFireAt: 0
     }
@@ -169,6 +191,7 @@ function setupHUD() {
     <div class="boost"><div id="boost-fill"></div></div>
     <div class="joy" id="joy"><div class="stick"></div></div>
     <div class="buttons" id="buttons"></div>
+    <div class="speed-lines" id="speed-lines"></div>
   `;
   app.appendChild(hud);
 
@@ -231,6 +254,7 @@ function setupHUD() {
   });
 
   state.hud = hud;
+  state.speedLines = hud.querySelector('#speed-lines');
   return {
     hp: hud.querySelector('#health-fill'),
     boost: hud.querySelector('#boost-fill')
@@ -271,6 +295,7 @@ function spawnProjectiles(owner, target) {
 }
 
 function updateProjectileSystem(dt) {
+  const now = performance.now();
   for (let i = state.projectiles.length - 1; i >= 0; i -= 1) {
     const p = state.projectiles[i];
     p.ttl -= dt;
@@ -280,15 +305,22 @@ function updateProjectileSystem(dt) {
       continue;
     }
 
-    if (p.homing) {
+    if (p.homing && now >= p.target.state.evadeHomingUntil) {
       const desired = new THREE.Vector3().subVectors(p.target.root.position, p.mesh.position).normalize().multiplyScalar(p.vel.length());
       p.vel.lerp(desired, 0.12);
     }
 
     p.mesh.position.addScaledVector(p.vel, dt);
-    if (p.mesh.position.distanceTo(p.target.root.position) < 1.4) {
-      p.target.state.hp = Math.max(0, p.target.state.hp - p.damage);
+    const hitRadius = p.target.state.vulnerabilityMove ? 2 : 1.15;
+    if (p.mesh.position.distanceTo(p.target.root.position) < hitRadius) {
+      const mitigation = p.target.state.vulnerabilityMove ? 1.35 : 1;
+      p.target.state.hp = Math.max(0, p.target.state.hp - p.damage * mitigation);
       p.target.state.hitStunUntil = performance.now() + p.hitStunMs;
+      if (p.target.state.action === 'melee-lunge') {
+        p.target.state.action = 'stagger';
+        p.target.state.staggerUntil = now + 280;
+        p.target.state.meleeLungeUntil = 0;
+      }
       p.target.body.velocity.set(0, 0, 0);
       scene.remove(p.mesh);
       state.projectiles.splice(i, 1);
@@ -358,6 +390,7 @@ function updatePlayer(now) {
   const speed = input.boost ? 21 : 10;
   state.player.body.velocity.x = move.x * speed;
   state.player.body.velocity.z = move.z * speed;
+  state.player.state.vulnerabilityMove = !input.boost && !input.step && Math.hypot(input.x, input.y) > 0.2;
 
   let action = 'idle';
   if (input.rise) {
@@ -366,8 +399,10 @@ function updatePlayer(now) {
   } else if (input.step) {
     state.player.body.velocity.x += move.x * 15;
     state.player.body.velocity.z += move.z * 15;
+    state.player.state.evadeHomingUntil = now + 220;
     action = 'step';
   } else if (input.boost) {
+    state.player.state.evadeHomingUntil = now + 120;
     action = 'dash';
   }
 
@@ -380,11 +415,14 @@ function updatePlayer(now) {
   if (input.meleeTap) {
     if (state.player.state.redLock) {
       const lunge = new THREE.Vector3().subVectors(e, p).setY(0).normalize();
-      state.player.body.velocity.x = lunge.x * 20;
-      state.player.body.velocity.z = lunge.z * 20;
-      if (p.distanceTo(e) < 10) state.enemy.state.hp = Math.max(0, state.enemy.state.hp - 14);
-      state.player.state.meleeAnimUntil = now + 180;
+      state.player.body.velocity.x = lunge.x * 26;
+      state.player.body.velocity.z = lunge.z * 26;
+      const meleeReach = 4.4;
+      if (p.distanceTo(e) < meleeReach) state.enemy.state.hp = Math.max(0, state.enemy.state.hp - 14);
+      state.player.state.meleeAnimUntil = now + 120;
+      state.player.state.meleeLungeUntil = now + 170;
       action = 'melee-lunge';
+      if (state.speedLines) state.speedLines.style.opacity = '1';
     } else {
       action = 'melee-whiff';
     }
@@ -412,14 +450,18 @@ function updateEnemy(now) {
   const lateral = Math.sin(now * 0.0024 + dist) > 0 ? 1 : -1;
   const move = dir.clone().multiplyScalar(retreat).add(side.multiplyScalar(lateral * (0.7 + Math.random() * 0.35)));
 
-  state.enemy.body.velocity.x = move.x * 8.7;
-  state.enemy.body.velocity.z = move.z * 8.7;
+  state.enemy.body.velocity.x = move.x * 9.8;
+  state.enemy.body.velocity.z = move.z * 9.8;
 
-  if (dist < 9 && state.enemy.state.boost > 25 && Math.random() > 0.8) {
-    state.enemy.body.velocity.x += -dir.x * 20;
-    state.enemy.body.velocity.z += -dir.z * 20;
+  if (dist < 12 && state.enemy.state.boost > 22 && now > state.enemy.state.stepCooldownUntil && Math.random() > 0.68) {
+    const dodge = Math.random() > 0.5 ? side : side.clone().multiplyScalar(-1);
+    state.enemy.body.velocity.x += dodge.x * 22;
+    state.enemy.body.velocity.z += dodge.z * 22;
+    state.enemy.state.evadeHomingUntil = now + 240;
+    state.enemy.state.stepCooldownUntil = now + 520;
     state.enemy.state.action = 'step';
   }
+  if (dist > 14 && Math.random() > 0.9) state.enemy.state.evadeHomingUntil = now + 90;
 
   if (Math.random() > 0.982) spawnProjectiles(state.enemy, state.player);
   if (Math.random() > 0.994) state.enemy.body.velocity.y = 9;
@@ -432,10 +474,15 @@ function updateLocksAndReticle() {
   state.player.state.redLock = dist <= state.player.unit.lockRange;
   state.enemy.state.redLock = dist <= state.enemy.unit.lockRange;
 
-  state.reticle.position.copy(state.enemy.root.position).add(new THREE.Vector3(0, 2.8, 0));
+  state.reticle.position.copy(state.enemy.root.position).add(new THREE.Vector3(0, 0.8, 0));
   state.reticle.material.color.set(state.player.state.redLock ? 0xff5f72 : 0x7effbd);
+  if (state.player.state.redLock !== state.reticleWasRed) {
+    state.reticlePulseUntil = performance.now() + 180;
+    state.reticleWasRed = state.player.state.redLock;
+  }
   const distScale = THREE.MathUtils.clamp(7 / camera.position.distanceTo(state.enemy.root.position), 0.75, 1.6);
-  state.reticle.scale.setScalar(5.4 * distScale);
+  const pulse = state.reticlePulseUntil > performance.now() ? 1.2 : 1;
+  state.reticle.scale.setScalar(5.4 * distScale * pulse);
   state.reticle.quaternion.copy(camera.quaternion);
 }
 
@@ -447,12 +494,20 @@ function updateTransforms() {
 
   [state.player, state.enemy].forEach((m) => {
     if (performance.now() < m.state.meleeAnimUntil) {
-      m.arms.left.rotation.x = -0.95;
-      m.arms.right.rotation.x = -0.95;
+      m.arms.left.rotation.x = -1.65;
+      m.arms.right.rotation.x = -1.65;
+      m.arms.left.rotation.z = -0.25;
+      m.arms.right.rotation.z = 0.25;
     } else {
       m.arms.left.rotation.x = 0;
       m.arms.right.rotation.x = 0;
+      m.arms.left.rotation.z = 0;
+      m.arms.right.rotation.z = 0;
     }
+    m.root.rotation.x = m.state.action === 'melee-lunge' ? -0.22 : 0;
+    if (performance.now() < m.state.staggerUntil) m.root.rotation.x = 0.18;
+    if (m.state.action === 'melee-lunge' && performance.now() > m.state.meleeLungeUntil) m.state.action = 'idle';
+    if (m.state.action === 'stagger' && performance.now() > m.state.staggerUntil) m.state.action = 'idle';
     if (!['dash', 'rise', 'step'].includes(m.state.action)) return;
     const puff = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 6), new THREE.MeshBasicMaterial({ color: 0x7efbff, transparent: true, opacity: 0.4 }));
     puff.position.copy(m.root.position).add(new THREE.Vector3(0, -1.8, -0.6));
@@ -494,6 +549,7 @@ function updateHud() {
   hudRefs.hp.style.width = `${state.player.state.hp}%`;
   hudRefs.boost.style.width = `${state.player.state.boost}%`;
   hudRefs.boost.style.background = state.player.state.overheatedUntil > performance.now() ? '#ff8c45' : '#90ff63';
+  if (state.speedLines && performance.now() > state.player.state.meleeLungeUntil) state.speedLines.style.opacity = '0';
 }
 
 function cleanupMatch() {
@@ -530,24 +586,49 @@ function showSelectMenu() {
 
   const menu = document.createElement('div');
   menu.className = 'menu';
-  menu.innerHTML = `
-    <h2>Select Unit</h2>
-    <button id="u1">${UNIT_DATA.unit1.name}</button>
-    <button id="u2">${UNIT_DATA.unit2.name}</button>
-  `;
+  const unitEntries = Object.entries(UNIT_DATA);
+  const unitButtons = unitEntries.map(([id, unit]) => `<button data-unit="${id}">${unit.name}</button>`).join('');
+  menu.innerHTML = `<h2>Select Unit</h2>${unitButtons}`;
   app.appendChild(menu);
 
-  menu.querySelector('#u1').onclick = () => {
-    state.playerUnitKey = 'unit1';
-    state.enemyUnitKey = 'unit2';
-    startMatch();
-  };
-  menu.querySelector('#u2').onclick = () => {
-    state.playerUnitKey = 'unit2';
-    state.enemyUnitKey = 'unit1';
-    startMatch();
-  };
+  menu.querySelectorAll('button[data-unit]').forEach((button) => {
+    button.onclick = () => {
+      state.playerUnitKey = button.dataset.unit;
+      const fallbackEnemy = unitEntries.find(([id]) => id !== state.playerUnitKey)?.[0] ?? state.playerUnitKey;
+      state.enemyUnitKey = fallbackEnemy;
+      startMatch();
+    };
+  });
 }
+
+function setupRootTouchAction() {
+  document.documentElement.style.touchAction = 'none';
+  document.body.style.touchAction = 'none';
+  app.style.touchAction = 'none';
+}
+
+window.addEventListener('gesturestart', (e) => e.preventDefault());
+window.addEventListener('gesturechange', (e) => e.preventDefault());
+window.addEventListener('gestureend', (e) => e.preventDefault());
+
+window.addEventListener('dblclick', (e) => {
+  if (!e.target.closest('.menu')) e.preventDefault();
+});
+
+window.addEventListener('touchstart', (e) => {
+  if (e.target.closest('.menu')) return;
+  e.preventDefault();
+}, { passive: false });
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+setupRootTouchAction();
+showSelectMenu();
+animate();
 
 function showEndMenu(win) {
   state.phase = 'end';
@@ -591,16 +672,3 @@ function animate() {
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }
-
-window.addEventListener('touchstart', (e) => {
-  if (e.target.closest('.menu')) return;
-  e.preventDefault();
-}, { passive: false });
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
-
-showSelectMenu();
-animate();
