@@ -6,6 +6,7 @@ import {
   resolveAction,
   applyBoostDash,
   applyBoostStep,
+  applyMoveVector,
   tickMatch,
   interpolateSnapshot,
   createInputBuffer
@@ -71,4 +72,34 @@ test('input buffer preserves latest taps', () => {
   buffer.push({ type: 'BOOST_DASH' });
   assert.equal(buffer.size(), 3);
   assert.deepEqual(buffer.flush().map((x) => x.type), ['MELEE', 'BOOST_STEP', 'BOOST_DASH']);
+});
+
+test('airborne boost step suspends fall during action window', () => {
+  const match = createMatchState();
+  const p1 = match.fighters.p1;
+  p1.y = 300;
+  p1.vy = -6;
+  applyBoostStep(p1, { x: 1, z: 0 }, 1000);
+  tickMatch(match, 1025);
+  assert.equal(p1.vy >= 0, true);
+});
+
+test('airborne shoot suspends fall during action window', () => {
+  const match = createMatchState();
+  const p1 = match.fighters.p1;
+  const p2 = match.fighters.p2;
+  p1.y = 300;
+  p1.vy = -4;
+  resolveAction(p1, p2, 'SHOOT', 1000, match.projectiles);
+  tickMatch(match, 1025);
+  assert.equal(p1.vy >= 0, true);
+});
+
+test('movement input is dampened in momentum phase', () => {
+  const match = createMatchState();
+  const p1 = match.fighters.p1;
+  applyBoostDash(p1, { x: 1, z: 0 }, 1000);
+  const before = p1.vx;
+  applyMoveVector(p1, { x: -1, z: 0 }, 1001);
+  assert.equal(p1.vx, before + ((-BOOST.cruiseSpeed) - before) * 0.5);
 });
