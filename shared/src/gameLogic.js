@@ -32,6 +32,17 @@ export const MOVE_SET = {
   HEAVY_MELEE: { name: 'Crush Slash', damage: 22, cooldownMs: 950, range: 270, magnetismSpeed: 25, isMelee: true, heavy: true }
 };
 
+const ACTION_HANDLERS = {
+  MOVE_VECTOR: applyMoveVectorAction,
+  BOOST_DASH: applyBoostDashAction,
+  BOOST_STEP: applyBoostStepAction,
+  VERTICAL_THRUST: applyVerticalThrustAction,
+  SHOOT: applyCombatAction,
+  SUB_SHOOT: applyCombatAction,
+  MELEE: applyCombatAction,
+  HEAVY_MELEE: applyCombatAction
+};
+
 export function createFighterState(id, x, z, characterId = 'nova') {
   return {
     id,
@@ -75,42 +86,18 @@ export function getDistance3D(a, b) {
 }
 
 export function applyBoostDash(fighter, move, now) {
-  if (fighter.isKO || fighter.isOverheated) return false;
-  const mag = Math.hypot(move.x ?? 0, move.z ?? 0);
-  if (mag < 0.1 || fighter.boost <= 0) return false;
-
-  const angle = Math.atan2(move.z, move.x);
-  fighter.vx = Math.cos(angle) * BOOST.dashSpeed;
-  fighter.vz = Math.sin(angle) * BOOST.dashSpeed;
-  fighter.isBoostDashing = true;
-  fighter.actionState = 'dashing';
-  fighter.lastActionAt = now;
-  fighter.lastActionType = 'BOOST_DASH';
-  return true;
+  const result = applyAction({ attacker: fighter, actionType: 'BOOST_DASH', move, now });
+  return result.applied;
 }
 
 export function applyBoostStep(fighter, move, now) {
-  if (fighter.isKO || fighter.isOverheated || fighter.boost < BOOST.stepCost) return false;
-
-  const angle = Math.atan2(move.z ?? 0, move.x ?? fighter.facing);
-  fighter.x += Math.cos(angle) * BOOST.stepDistance;
-  fighter.z += Math.sin(angle) * BOOST.stepDistance;
-  fighter.boost = Math.max(0, fighter.boost - BOOST.stepCost);
-  fighter.trackingCutUntil = now + BOOST.trackingCutMs;
-  fighter.canCancelUntil = now + BOOST.cancelWindowMs;
-  fighter.actionState = 'stepping';
-  fighter.lastActionAt = now;
-  fighter.lastActionType = 'BOOST_STEP';
-  return true;
+  const result = applyAction({ attacker: fighter, actionType: 'BOOST_STEP', move, now });
+  return result.applied;
 }
 
 export function applyVerticalThrust(fighter, direction = 0, now = Date.now()) {
-  if (fighter.isKO || fighter.isOverheated || direction === 0 || fighter.boost <= 0) return false;
-  fighter.vy += direction * BOOST.altitudeSpeed * 0.3;
-  fighter.boost = Math.max(0, fighter.boost - BOOST.riseDropCostPerTick);
-  fighter.actionState = direction > 0 ? 'rising' : 'dropping';
-  fighter.canCancelUntil = now + BOOST.cancelWindowMs;
-  return true;
+  const result = applyAction({ attacker: fighter, actionType: 'VERTICAL_THRUST', vertical: direction, now });
+  return result.applied;
 }
 
 function enterOverheat(fighter, now) {
@@ -124,8 +111,73 @@ function enterOverheat(fighter, now) {
 }
 
 export function resolveAction(attacker, defender, actionType, now, projectiles = []) {
+  return applyAction({ attacker, defender, actionType, now, projectiles });
+}
+
+export function applyMoveVector(fighter, move, now = Date.now()) {
+  const result = applyAction({ attacker: fighter, actionType: 'MOVE_VECTOR', move, now });
+  return result.applied;
+}
+
+export function applyAction({ attacker, defender = null, actionType, now = Date.now(), move = null, vertical = 0, projectiles = [] }) {
+  const handler = ACTION_HANDLERS[actionType];
+  if (!handler) return { applied: false, reason: 'unknown-action' };
+  return handler({ attacker, defender, actionType, now, move, vertical, projectiles });
+}
+
+function applyMoveVectorAction({ attacker, move }) {
+  if (attacker.isKO || attacker.isOverheated) return { applied: false };
+  const mag = Math.hypot(move?.x ?? 0, move?.z ?? 0);
+  if (mag < 0.1) return { applied: false };
+
+  attacker.vx = (move?.x ?? 0) * BOOST.cruiseSpeed;
+  attacker.vz = (move?.z ?? 0) * BOOST.cruiseSpeed;
+  attacker.facing = (move?.x ?? 0) >= 0 ? 1 : -1;
+  return { applied: true };
+}
+
+function applyBoostDashAction({ attacker, now, move }) {
+  if (attacker.isKO || attacker.isOverheated) return { applied: false };
+  const mag = Math.hypot(move?.x ?? 0, move?.z ?? 0);
+  if (mag < 0.1 || attacker.boost <= 0) return { applied: false };
+
+  const angle = Math.atan2(move.z, move.x);
+  attacker.vx = Math.cos(angle) * BOOST.dashSpeed;
+  attacker.vz = Math.sin(angle) * BOOST.dashSpeed;
+  attacker.isBoostDashing = true;
+  attacker.actionState = 'dashing';
+  attacker.lastActionAt = now;
+  attacker.lastActionType = 'BOOST_DASH';
+  return { applied: true };
+}
+
+function applyBoostStepAction({ attacker, now, move }) {
+  if (attacker.isKO || attacker.isOverheated || attacker.boost < BOOST.stepCost) return { applied: false };
+
+  const angle = Math.atan2(move?.z ?? 0, move?.x ?? attacker.facing);
+  attacker.x += Math.cos(angle) * BOOST.stepDistance;
+  attacker.z += Math.sin(angle) * BOOST.stepDistance;
+  attacker.boost = Math.max(0, attacker.boost - BOOST.stepCost);
+  attacker.trackingCutUntil = now + BOOST.trackingCutMs;
+  attacker.canCancelUntil = now + BOOST.cancelWindowMs;
+  attacker.actionState = 'stepping';
+  attacker.lastActionAt = now;
+  attacker.lastActionType = 'BOOST_STEP';
+  return { applied: true };
+}
+
+function applyVerticalThrustAction({ attacker, now, vertical }) {
+  if (attacker.isKO || attacker.isOverheated || vertical === 0 || attacker.boost <= 0) return { applied: false };
+  attacker.vy += vertical * BOOST.altitudeSpeed * 0.3;
+  attacker.boost = Math.max(0, attacker.boost - BOOST.riseDropCostPerTick);
+  attacker.actionState = vertical > 0 ? 'rising' : 'dropping';
+  attacker.canCancelUntil = now + BOOST.cancelWindowMs;
+  return { applied: true };
+}
+
+function applyCombatAction({ attacker, defender, actionType, now, projectiles }) {
   const move = MOVE_SET[actionType];
-  if (!move || attacker.isKO || defender.isKO || attacker.isOverheated) return { applied: false };
+  if (!move || attacker.isKO || defender?.isKO || attacker.isOverheated || !defender) return { applied: false };
 
   const sinceLast = now - attacker.lastActionAt;
   const canCancel = now <= attacker.canCancelUntil;
