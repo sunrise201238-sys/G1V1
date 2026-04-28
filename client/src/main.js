@@ -120,6 +120,11 @@ const MOMENTUM_STANDARD = 100;
 const BOOST_MOVE_SPEED = 11.76;
 const HOMING_MAX_DEG_PER_FRAME = 15;
 const BOOST_CAP = 125;
+const STEP_DISTANCE = 9.2;
+const STEP_DURATION_MS = 125;
+const STEP_COOLDOWN_MS = 380;
+const STEP_BOOST_COST = 16;
+const STEP_HOMING_CUT_MS = 260;
 
 const input = {
   x: 0,
@@ -127,6 +132,7 @@ const input = {
   boost: false,
   boostHeld: false,
   rise: false,
+  stepTap: false,
   shootTap: false,
   shootHold: false,
   meleeTap: false
@@ -205,6 +211,15 @@ function createMech(color, unitData) {
       momentumDecay: 0.84,
       emptyRecoverUntil: 0,
       refillPausedUntil: 0,
+      stepStartAt: 0,
+      stepUntil: 0,
+      stepCooldownUntil: 0,
+      stepFromX: 0,
+      stepFromZ: 0,
+      stepToX: 0,
+      stepToZ: 0,
+      queuedMomentumVX: 0,
+      queuedMomentumVZ: 0,
       machineBurstRemaining: 0,
       nextFireAt: 0,
       strafeSign: 1,
@@ -245,7 +260,7 @@ function setupHUD() {
   `;
   app.appendChild(hud);
 
-  ['boost', 'shoot', 'melee', 'rise'].forEach((action) => {
+  ['boost', 'shoot', 'melee', 'step', 'rise'].forEach((action) => {
     const b = document.createElement('button');
     b.dataset.k = action;
     b.className = `btn-${action}`;
@@ -301,6 +316,7 @@ function setupHUD() {
         input.shootHold = true;
       }
       else if (k === 'melee') input.meleeTap = true;
+      else if (k === 'step') input.stepTap = true;
       else if (k === 'boost') {
         input.boostHeld = true;
         input.boost = true;
@@ -462,7 +478,9 @@ function updateBoost(mech, now, action) {
 function updatePlayer(now) {
   const p = state.player.root.position;
   const e = state.enemy.root.position;
+  const stepState = state.player.state;
   const inMeleeLunge = now <= state.player.state.meleeLungeUntil;
+  const inStep = now <= stepState.stepUntil;
   input.boost = input.boostHeld;
 
   if (inMeleeLunge) {
@@ -482,14 +500,31 @@ function updatePlayer(now) {
   const hitStunScale = now < state.player.state.hitStunUntil ? 0.25 : 1;
   const emptyPenaltyActive = now < state.player.state.emptyRecoverUntil;
   const canInputMove = state.player.state.boost > 0 && !emptyPenaltyActive;
-  if (!inMeleeLunge) {
+  if (!inMeleeLunge && !inStep) {
     state.player.body.velocity.x = canInputMove ? move.x * speed * hitStunScale : 0;
     state.player.body.velocity.z = canInputMove ? move.z * speed * hitStunScale : 0;
   }
   state.player.state.vulnerabilityMove = !input.boost && Math.hypot(input.x, input.y) > 0.2;
 
   let action = 'idle';
-  if (input.rise && canInputMove) {
+  if (inStep) {
+    const span = Math.max(1, stepState.stepUntil - stepState.stepStartAt);
+    const progress = THREE.MathUtils.clamp((now - stepState.stepStartAt) / span, 0, 1);
+    state.player.body.position.x = THREE.MathUtils.lerp(stepState.stepFromX, stepState.stepToX, progress);
+    state.player.body.position.z = THREE.MathUtils.lerp(stepState.stepFromZ, stepState.stepToZ, progress);
+    state.player.body.velocity.x = 0;
+    state.player.body.velocity.z = 0;
+    state.player.state.action = 'step';
+    action = 'step';
+  } else if (stepState.stepUntil > 0) {
+    stepState.stepUntil = 0;
+    if (stepState.queuedMomentumVX !== 0 || stepState.queuedMomentumVZ !== 0) {
+      state.player.state.momentumVX += stepState.queuedMomentumVX;
+      state.player.state.momentumVZ += stepState.queuedMomentumVZ;
+      stepState.queuedMomentumVX = 0;
+      stepState.queuedMomentumVZ = 0;
+    }
+  } else if (input.rise && canInputMove) {
     input.boost = false;
     state.player.body.velocity.y = 12.38;
     state.player.state.hoverUntil = now + 300;
@@ -500,6 +535,33 @@ function updatePlayer(now) {
     inheritMomentum(state.player, MOMENTUM_STANDARD * 1.5);
     action = 'dash';
     triggerDashDefense(now);
+  }
+
+  if (input.stepTap) {
+    if (!inStep && canInputMove && now >= stepState.stepCooldownUntil && stepState.boost >= STEP_BOOST_COST) {
+      let stepDir = move.clone();
+      if (stepDir.lengthSq() < 0.03) stepDir.set(state.player.body.velocity.x, 0, state.player.body.velocity.z);
+      if (stepDir.lengthSq() < 0.03) stepDir.set(p.x - e.x, 0, p.z - e.z);
+      if (stepDir.lengthSq() < 0.03) stepDir.set(1, 0, 0);
+      stepDir.normalize();
+
+      stepState.stepStartAt = now;
+      stepState.stepUntil = now + STEP_DURATION_MS;
+      stepState.stepCooldownUntil = now + STEP_COOLDOWN_MS;
+      stepState.stepFromX = state.player.body.position.x;
+      stepState.stepFromZ = state.player.body.position.z;
+      stepState.stepToX = stepState.stepFromX + stepDir.x * STEP_DISTANCE;
+      stepState.stepToZ = stepState.stepFromZ + stepDir.z * STEP_DISTANCE;
+      stepState.queuedMomentumVX = state.player.state.momentumVX * 0.65 + state.player.body.velocity.x * 0.35;
+      stepState.queuedMomentumVZ = state.player.state.momentumVZ * 0.65 + state.player.body.velocity.z * 0.35;
+      state.player.state.momentumVX = 0;
+      state.player.state.momentumVZ = 0;
+      state.player.state.boost = Math.max(0, state.player.state.boost - STEP_BOOST_COST);
+      state.player.state.refillPausedUntil = now + 260;
+      clearIncomingHoming(state.player, now);
+      action = 'step';
+    }
+    input.stepTap = false;
   }
 
   if (input.shootTap) {
@@ -572,7 +634,7 @@ function updatePlayer(now) {
     state.player.body.velocity.y = 0;
   }
 
-  applyMomentum(state.player);
+  applyMomentum(state.player, { suspend: action === 'step' });
   updateBoost(state.player, now, action);
 }
 
@@ -854,6 +916,15 @@ function triggerEnemyEvasion(now) {
   }
   state.enemy.state.evadeHomingUntil = now + 260;
   state.enemy.state.evadeCooldownUntil = now + 520;
+}
+
+function clearIncomingHoming(mech, now) {
+  mech.state.evadeHomingUntil = now + STEP_HOMING_CUT_MS;
+  for (const projectile of state.projectiles) {
+    if (projectile.target !== mech) continue;
+    projectile.homing = false;
+    projectile.homingLost = true;
+  }
 }
 
 function triggerDashDefense(now) {
