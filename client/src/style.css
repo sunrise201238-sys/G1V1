@@ -14,21 +14,40 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none !importan
 .joy { position: absolute; left: 28px; bottom: 28px; width: 140px; height: 140px; border-radius: 50%; background: rgba(160, 200, 220, 0.15); pointer-events: auto; }
 .stick { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin-left: -28px; margin-top: -28px; border-radius: 50%; background: rgba(240, 252, 255, 0.35); }
 
-.buttons { position: absolute; right: 16px; bottom: 20px; width: 260px; height: 230px; pointer-events: auto; }
+.buttons {
+  --btn-size: 78px;
+  --btn-gap: 12px;
+  position: absolute;
+  right: calc(24px + env(safe-area-inset-right, 0px));
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  width: calc(var(--btn-size) * 2 + var(--btn-gap));
+  height: calc(var(--btn-size) * 3 + var(--btn-gap) * 2);
+  pointer-events: auto;
+}
 .buttons button {
   position: absolute;
-  width: 78px;
-  height: 78px;
-  border: 2px solid rgba(176, 231, 255, 0.8);
+  width: var(--btn-size);
+  height: var(--btn-size);
+  border: 2px solid rgba(176, 231, 255, 0.78);
   border-radius: 50%;
   color: #dcf9ff;
   background: rgba(45, 72, 93, 0.35);
   font-weight: 700;
 }
 .buttons .btn-boost { right: 0; bottom: 0; }
-.buttons .btn-rise { right: 0; top: 70px; }
-.buttons .btn-shoot { right: 102px; bottom: 0; width: 86px; height: 86px; }
-.buttons .btn-melee { right: 102px; top: 70px; border-color: rgba(176, 231, 255, 0.8); background: rgba(45, 72, 93, 0.35); }
+.buttons .btn-rise { right: 0; bottom: calc(var(--btn-size) + var(--btn-gap)); }
+.buttons .btn-step { right: 0; bottom: calc((var(--btn-size) + var(--btn-gap)) * 2); }
+.buttons .btn-shoot { right: calc(var(--btn-size) + var(--btn-gap)); bottom: 0; }
+.buttons .btn-melee { right: calc(var(--btn-size) + var(--btn-gap)); bottom: calc(var(--btn-size) + var(--btn-gap)); }
+
+@media (max-width: 900px) {
+  .buttons {
+    --btn-size: 72px;
+    --btn-gap: 10px;
+    right: calc(16px + env(safe-area-inset-right, 0px));
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+}
 
 .menu { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgba(5, 8, 14, 0.78); z-index: 100; pointer-events: auto; }
 .menu h2 { margin: 0 0 8px; color: #d7f6ff; }
