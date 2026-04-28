@@ -1,20 +1,47 @@
 :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
-body { margin: 0; overflow: hidden; background: #06090f; touch-action: none !important; }
-#app { width: 100vw; height: 100vh; position: relative; }
+html, body { margin: 0; overflow: hidden; background: #06090f; touch-action: none !important; }
+#app { width: 100vw; height: 100vh; position: relative; touch-action: none !important; }
 canvas { display: block; width: 100%; height: 100%; touch-action: none !important; }
 
 .touch-hud { position: absolute; inset: 0; pointer-events: none; }
 .health { position: absolute; top: 14px; left: 16px; width: 180px; height: 10px; background: rgba(12, 18, 28, 0.6); border-radius: 999px; overflow: hidden; }
 #health-fill { width: 100%; height: 100%; background: #ff6d8f; }
+.enemy-health { position: absolute; top: 14px; right: 16px; width: 180px; height: 10px; background: rgba(12, 18, 28, 0.6); border-radius: 999px; overflow: hidden; }
+#enemy-health-fill { width: 100%; height: 100%; background: #7ec5ff; }
 .boost { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); width: 38vw; max-width: 340px; height: 8px; background: rgba(12, 18, 28, 0.6); border-radius: 999px; overflow: hidden; }
 #boost-fill { height: 100%; width: 100%; background: #90ff63; }
 
 .joy { position: absolute; left: 28px; bottom: 28px; width: 140px; height: 140px; border-radius: 50%; background: rgba(160, 200, 220, 0.15); pointer-events: auto; }
 .stick { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin-left: -28px; margin-top: -28px; border-radius: 50%; background: rgba(240, 252, 255, 0.35); }
 
-.buttons { position: absolute; right: 22px; bottom: 18px; width: 240px; display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 10px; pointer-events: auto; }
-.buttons button { border: 0; border-radius: 999px; padding: 12px 0; color: #dcf9ff; background: rgba(146, 207, 230, 0.2); font-weight: 700; }
+.buttons { position: absolute; right: 16px; bottom: 20px; width: 260px; height: 230px; pointer-events: auto; }
+.buttons button {
+  position: absolute;
+  width: 78px;
+  height: 78px;
+  border: 2px solid rgba(176, 231, 255, 0.8);
+  border-radius: 50%;
+  color: #dcf9ff;
+  background: rgba(45, 72, 93, 0.35);
+  font-weight: 700;
+}
+.buttons .btn-boost { right: 0; bottom: 0; }
+.buttons .btn-step { right: 0; top: 0; }
+.buttons .btn-rise { right: 0; top: 70px; }
+.buttons .btn-shoot { right: 102px; bottom: 0; width: 86px; height: 86px; }
+.buttons .btn-melee { right: 102px; top: 70px; border-color: rgba(176, 231, 255, 0.8); background: rgba(45, 72, 93, 0.35); }
 
-.menu { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgba(5, 8, 14, 0.78); z-index: 20; }
+.menu { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgba(5, 8, 14, 0.78); z-index: 100; pointer-events: auto; }
 .menu h2 { margin: 0 0 8px; color: #d7f6ff; }
 .menu button { width: 260px; padding: 14px 10px; border-radius: 10px; border: 1px solid #4c6176; background: #1a2634; color: #e5fbff; }
+
+.speed-lines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 80ms linear;
+  background:
+    linear-gradient(100deg, rgba(120, 220, 255, 0.28), transparent 32%) left/18% 100% no-repeat,
+    linear-gradient(260deg, rgba(120, 220, 255, 0.28), transparent 32%) right/18% 100% no-repeat;
+}
