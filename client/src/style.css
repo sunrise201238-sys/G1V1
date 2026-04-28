@@ -27,6 +27,12 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none !importan
 }
 .buttons .btn-boost { right: 0; bottom: 0; }
 .buttons .btn-rise { right: 0; top: 70px; }
+.buttons .btn-step {
+  right: 0;
+  top: 140px;
+  border-color: rgba(255, 199, 123, 0.88);
+  background: rgba(113, 76, 35, 0.42);
+}
 .buttons .btn-shoot { right: 102px; bottom: 0; width: 86px; height: 86px; }
 .buttons .btn-melee { right: 102px; top: 70px; border-color: rgba(176, 231, 255, 0.8); background: rgba(45, 72, 93, 0.35); }
 
