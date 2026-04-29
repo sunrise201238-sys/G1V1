@@ -2,6 +2,7 @@ import { io } from 'socket.io-client';
 import {
   BOOST,
   createMatchState,
+  applyMoveVector,
   resolveAction,
   applyBoostDash,
   applyBoostStep,
@@ -282,10 +283,7 @@ export class FightScene extends Phaser.Scene {
       return;
     }
 
-    if (this.player.isOverheated) return;
-    this.player.vx = move.x * BOOST.cruiseSpeed;
-    this.player.vz = move.z * BOOST.cruiseSpeed;
-    this.player.facing = move.x >= 0 ? 1 : -1;
+    if (!applyMoveVector(this.player, move, Date.now())) return;
     if (move.dashGesture || move.boosting) this.tryDash(move);
   }
 
