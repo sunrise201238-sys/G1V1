@@ -20,6 +20,23 @@ export const BOOST = {
   stepDistance: 180,
   friction: 0.82,
   drag: 0.88,
+  fallDrag: 0.96,
+  gravityPerTick: 1.25,
+  maxFallSpeed: 18,
+  riseThrustFactor: 0.3,
+  dropThrustFactor: 0.68,
+  dashFallSuspendMs: 560,
+  stepFallSuspendMs: 380,
+  shootFallSuspendMs: 540,
+  dashDurationMs: 220,
+  boostMomentumDurationMs: 500,
+  boostMomentumCarry: 0.72,
+  stepMomentumDurationMs: 260,
+  stepMomentumCarry: 0.52,
+  shootMomentumDurationMs: 220,
+  shootMomentumCarry: 0.35,
+  meleeMomentumDurationMs: 280,
+  meleeMomentumCarry: 0.45,
   trackingCutMs: 220,
   overheatDurationMs: 1500,
   cancelWindowMs: 280
@@ -30,6 +47,17 @@ export const MOVE_SET = {
   SUB_SHOOT: { name: 'Scatter Shot', damage: 10, cooldownMs: 500, range: 760, projectileSpeed: 18, turnRate: 0.09, hitRadius: 40, isMelee: false },
   MELEE: { name: 'Beam Saber', damage: 16, cooldownMs: 620, range: 240, magnetismSpeed: 20, isMelee: true },
   HEAVY_MELEE: { name: 'Crush Slash', damage: 22, cooldownMs: 950, range: 270, magnetismSpeed: 25, isMelee: true, heavy: true }
+};
+
+const ACTION_HANDLERS = {
+  MOVE_VECTOR: applyMoveVectorAction,
+  BOOST_DASH: applyBoostDashAction,
+  BOOST_STEP: applyBoostStepAction,
+  VERTICAL_THRUST: applyVerticalThrustAction,
+  SHOOT: applyCombatAction,
+  SUB_SHOOT: applyCombatAction,
+  MELEE: applyCombatAction,
+  HEAVY_MELEE: applyCombatAction
 };
 
 export function createFighterState(id, x, z, characterId = 'nova') {
@@ -46,11 +74,18 @@ export function createFighterState(id, x, z, characterId = 'nova') {
     facing: 1,
     boost: BOOST.max,
     isBoostDashing: false,
+    dashEndsAt: 0,
     isOverheated: false,
     overheatUntil: 0,
     canCancelUntil: 0,
     lockTargetId: id === 'p1' ? 'p2' : 'p1',
     trackingCutUntil: 0,
+    suspendFallUntil: 0,
+    momentumUntil: 0,
+    momentumStartedAt: 0,
+    momentumDurationMs: 0,
+    momentumVx: 0,
+    momentumVz: 0,
     actionState: 'idle',
     lastActionAt: 0,
     lastActionType: null,
@@ -75,48 +110,26 @@ export function getDistance3D(a, b) {
 }
 
 export function applyBoostDash(fighter, move, now) {
-  if (fighter.isKO || fighter.isOverheated) return false;
-  const mag = Math.hypot(move.x ?? 0, move.z ?? 0);
-  if (mag < 0.1 || fighter.boost <= 0) return false;
-
-  const angle = Math.atan2(move.z, move.x);
-  fighter.vx = Math.cos(angle) * BOOST.dashSpeed;
-  fighter.vz = Math.sin(angle) * BOOST.dashSpeed;
-  fighter.isBoostDashing = true;
-  fighter.actionState = 'dashing';
-  fighter.lastActionAt = now;
-  fighter.lastActionType = 'BOOST_DASH';
-  return true;
+  const result = applyAction({ attacker: fighter, actionType: 'BOOST_DASH', move, now });
+  return result.applied;
 }
 
 export function applyBoostStep(fighter, move, now) {
-  if (fighter.isKO || fighter.isOverheated || fighter.boost < BOOST.stepCost) return false;
-
-  const angle = Math.atan2(move.z ?? 0, move.x ?? fighter.facing);
-  fighter.x += Math.cos(angle) * BOOST.stepDistance;
-  fighter.z += Math.sin(angle) * BOOST.stepDistance;
-  fighter.boost = Math.max(0, fighter.boost - BOOST.stepCost);
-  fighter.trackingCutUntil = now + BOOST.trackingCutMs;
-  fighter.canCancelUntil = now + BOOST.cancelWindowMs;
-  fighter.actionState = 'stepping';
-  fighter.lastActionAt = now;
-  fighter.lastActionType = 'BOOST_STEP';
-  return true;
+  const result = applyAction({ attacker: fighter, actionType: 'BOOST_STEP', move, now });
+  return result.applied;
 }
 
 export function applyVerticalThrust(fighter, direction = 0, now = Date.now()) {
-  if (fighter.isKO || fighter.isOverheated || direction === 0 || fighter.boost <= 0) return false;
-  fighter.vy += direction * BOOST.altitudeSpeed * 0.3;
-  fighter.boost = Math.max(0, fighter.boost - BOOST.riseDropCostPerTick);
-  fighter.actionState = direction > 0 ? 'rising' : 'dropping';
-  fighter.canCancelUntil = now + BOOST.cancelWindowMs;
-  return true;
+  const result = applyAction({ attacker: fighter, actionType: 'VERTICAL_THRUST', vertical: direction, now });
+  return result.applied;
 }
 
 function enterOverheat(fighter, now) {
   fighter.isOverheated = true;
   fighter.overheatUntil = now + BOOST.overheatDurationMs;
   fighter.isBoostDashing = false;
+  fighter.dashEndsAt = 0;
+  clearMomentum(fighter);
   fighter.vx = 0;
   fighter.vz = 0;
   fighter.vy = -2;
@@ -124,8 +137,89 @@ function enterOverheat(fighter, now) {
 }
 
 export function resolveAction(attacker, defender, actionType, now, projectiles = []) {
+  return applyAction({ attacker, defender, actionType, now, projectiles });
+}
+
+export function applyMoveVector(fighter, move, now = Date.now()) {
+  const result = applyAction({ attacker: fighter, actionType: 'MOVE_VECTOR', move, now });
+  return result.applied;
+}
+
+export function applyAction({ attacker, defender = null, actionType, now = Date.now(), move = null, vertical = 0, projectiles = [] }) {
+  const handler = ACTION_HANDLERS[actionType];
+  if (!handler) return { applied: false, reason: 'unknown-action' };
+  return handler({ attacker, defender, actionType, now, move, vertical, projectiles });
+}
+
+function applyMoveVectorAction({ attacker, move, now }) {
+  if (attacker.isKO || attacker.isOverheated) return { applied: false };
+  const mag = Math.hypot(move?.x ?? 0, move?.z ?? 0);
+  if (mag < 0.1) return { applied: false };
+
+  const targetVx = (move?.x ?? 0) * BOOST.cruiseSpeed;
+  const targetVz = (move?.z ?? 0) * BOOST.cruiseSpeed;
+  if (isInMomentumPhase(attacker, now)) {
+    return { applied: true };
+  } else {
+    attacker.vx = targetVx;
+    attacker.vz = targetVz;
+  }
+  attacker.facing = (move?.x ?? 0) >= 0 ? 1 : -1;
+  return { applied: true };
+}
+
+function applyBoostDashAction({ attacker, now, move }) {
+  if (attacker.isKO || attacker.isOverheated) return { applied: false };
+  const mag = Math.hypot(move?.x ?? 0, move?.z ?? 0);
+  if (mag < 0.1 || attacker.boost <= 0) return { applied: false };
+
+  const angle = Math.atan2(move.z, move.x);
+  attacker.vx = Math.cos(angle) * BOOST.dashSpeed;
+  attacker.vz = Math.sin(angle) * BOOST.dashSpeed;
+  attacker.isBoostDashing = true;
+  attacker.dashEndsAt = now + BOOST.dashDurationMs;
+  clearMomentum(attacker);
+  attacker.actionState = 'dashing';
+  attacker.lastActionAt = now;
+  attacker.lastActionType = 'BOOST_DASH';
+  suspendFall(attacker, now, BOOST.dashFallSuspendMs);
+  return { applied: true };
+}
+
+function applyBoostStepAction({ attacker, now, move }) {
+  if (attacker.isKO || attacker.isOverheated || attacker.boost < BOOST.stepCost) return { applied: false };
+
+  const angle = Math.atan2(move?.z ?? 0, move?.x ?? attacker.facing);
+  attacker.x += Math.cos(angle) * BOOST.stepDistance;
+  attacker.z += Math.sin(angle) * BOOST.stepDistance;
+  attacker.boost = Math.max(0, attacker.boost - BOOST.stepCost);
+  attacker.trackingCutUntil = now + BOOST.trackingCutMs;
+  attacker.canCancelUntil = now + BOOST.cancelWindowMs;
+  attacker.actionState = 'stepping';
+  attacker.lastActionAt = now;
+  attacker.lastActionType = 'BOOST_STEP';
+  startMomentum(attacker, now, {
+    durationMs: BOOST.stepMomentumDurationMs,
+    vx: Math.cos(angle) * BOOST.cruiseSpeed * BOOST.stepMomentumCarry,
+    vz: Math.sin(angle) * BOOST.cruiseSpeed * BOOST.stepMomentumCarry
+  });
+  suspendFall(attacker, now, BOOST.stepFallSuspendMs);
+  return { applied: true };
+}
+
+function applyVerticalThrustAction({ attacker, now, vertical }) {
+  if (attacker.isKO || attacker.isOverheated || vertical === 0 || attacker.boost <= 0) return { applied: false };
+  const thrustFactor = vertical > 0 ? BOOST.riseThrustFactor : BOOST.dropThrustFactor;
+  attacker.vy += vertical * BOOST.altitudeSpeed * thrustFactor;
+  attacker.boost = Math.max(0, attacker.boost - BOOST.riseDropCostPerTick);
+  attacker.actionState = vertical > 0 ? 'rising' : 'dropping';
+  attacker.canCancelUntil = now + BOOST.cancelWindowMs;
+  return { applied: true };
+}
+
+function applyCombatAction({ attacker, defender, actionType, now, projectiles }) {
   const move = MOVE_SET[actionType];
-  if (!move || attacker.isKO || defender.isKO || attacker.isOverheated) return { applied: false };
+  if (!move || attacker.isKO || defender?.isKO || attacker.isOverheated || !defender) return { applied: false };
 
   const sinceLast = now - attacker.lastActionAt;
   const canCancel = now <= attacker.canCancelUntil;
@@ -138,6 +232,12 @@ export function resolveAction(attacker, defender, actionType, now, projectiles =
   if (!move.isMelee) {
     projectiles.push(createProjectile(attacker, defender, move, now));
     attacker.actionState = 'shooting';
+    startMomentum(attacker, now, {
+      durationMs: BOOST.shootMomentumDurationMs,
+      vx: attacker.vx * BOOST.shootMomentumCarry,
+      vz: attacker.vz * BOOST.shootMomentumCarry
+    });
+    suspendFall(attacker, now, BOOST.shootFallSuspendMs);
     return { applied: true, spawnedProjectile: true };
   }
 
@@ -155,6 +255,11 @@ export function resolveAction(attacker, defender, actionType, now, projectiles =
   defender.isKO = defender.health <= 0;
   attacker.comboCount += 1;
   attacker.actionState = move.heavy ? 'heavy-melee' : 'melee';
+  startMomentum(attacker, now, {
+    durationMs: BOOST.meleeMomentumDurationMs,
+    vx: attacker.vx * BOOST.meleeMomentumCarry,
+    vz: attacker.vz * BOOST.meleeMomentumCarry
+  });
   return { applied: true, damage: move.damage, isKO: defender.isKO, heavy: !!move.heavy };
 }
 
@@ -236,20 +341,38 @@ export function tickFighter(fighter, now = Date.now()) {
     return;
   }
 
+  const fallingLocked = isFallingSuspended(fighter, now);
+  tickMomentum(fighter, now);
+  if (fallingLocked && fighter.y > ARENA.minAltitude && fighter.vy < 0) fighter.vy = 0;
+
   fighter.x = clamp(fighter.x + fighter.vx, 80, ARENA.width - 80);
   fighter.z = clamp(fighter.z + fighter.vz, 80, ARENA.depth - 80);
   fighter.y = clamp(fighter.y + fighter.vy, ARENA.minAltitude, ARENA.maxAltitude);
 
   fighter.vx *= BOOST.friction;
   fighter.vz *= BOOST.friction;
-  fighter.vy *= BOOST.drag;
+  fighter.vy *= fighter.vy < 0 ? BOOST.fallDrag : BOOST.drag;
+
+  if (fighter.y <= ARENA.minAltitude) fighter.vy = Math.max(0, fighter.vy);
+  else if (fallingLocked) fighter.vy = Math.max(0, fighter.vy);
+  else fighter.vy = Math.max(-BOOST.maxFallSpeed, fighter.vy - BOOST.gravityPerTick);
 
   if (fighter.isBoostDashing) {
     fighter.boost = Math.max(0, fighter.boost - BOOST.dashDrainPerTick);
+    if (now >= fighter.dashEndsAt) {
+      fighter.isBoostDashing = false;
+      startMomentum(fighter, now, {
+        durationMs: BOOST.boostMomentumDurationMs,
+        vx: fighter.vx * BOOST.boostMomentumCarry,
+        vz: fighter.vz * BOOST.boostMomentumCarry
+      });
+    }
     if (fighter.boost <= 0) {
       enterOverheat(fighter, now);
       return;
     }
+  } else if (isInMomentumPhase(fighter, now)) {
+    // Momentum glide itself should not consume or regenerate boost.
   } else {
     fighter.boost = Math.min(BOOST.max, fighter.boost + BOOST.regenPerTick);
   }
@@ -258,7 +381,7 @@ export function tickFighter(fighter, now = Date.now()) {
   if (Math.abs(fighter.vz) < 0.14) fighter.vz = 0;
   if (Math.abs(fighter.vy) < 0.14) fighter.vy = 0;
 
-  fighter.isBoostDashing = fighter.isBoostDashing && fighter.boost > 0.5;
+  fighter.isBoostDashing = fighter.isBoostDashing && fighter.boost > 0.5 && now < fighter.dashEndsAt;
   if (!fighter.isBoostDashing && now > fighter.canCancelUntil && !fighter.actionState.includes('melee') && fighter.actionState !== 'shooting') {
     fighter.actionState = 'idle';
   }
@@ -326,4 +449,45 @@ function PhaserMathAngleWrap(angle) {
   while (angle <= -Math.PI) angle += Math.PI * 2;
   while (angle > Math.PI) angle -= Math.PI * 2;
   return angle;
+}
+
+function suspendFall(fighter, now, durationMs = BOOST.cancelWindowMs) {
+  fighter.suspendFallUntil = Math.max(fighter.suspendFallUntil ?? 0, now + durationMs);
+}
+
+function isFallingSuspended(fighter, now) {
+  return fighter.isBoostDashing || now <= (fighter.suspendFallUntil ?? 0);
+}
+
+function isInMomentumPhase(fighter, now) {
+  return fighter.isBoostDashing || now <= (fighter.momentumUntil ?? 0);
+}
+
+function clearMomentum(fighter) {
+  fighter.momentumUntil = 0;
+  fighter.momentumStartedAt = 0;
+  fighter.momentumDurationMs = 0;
+  fighter.momentumVx = 0;
+  fighter.momentumVz = 0;
+}
+
+function startMomentum(fighter, now, { durationMs, vx, vz }) {
+  fighter.momentumStartedAt = now;
+  fighter.momentumDurationMs = durationMs;
+  fighter.momentumUntil = now + durationMs;
+  fighter.momentumVx = vx;
+  fighter.momentumVz = vz;
+}
+
+function tickMomentum(fighter, now) {
+  if (fighter.isBoostDashing) return;
+  if (now > (fighter.momentumUntil ?? 0)) return;
+
+  const elapsed = now - fighter.momentumStartedAt;
+  const ratio = 1 - elapsed / Math.max(1, fighter.momentumDurationMs);
+  const desiredVx = fighter.momentumVx * Math.max(0, ratio);
+  const desiredVz = fighter.momentumVz * Math.max(0, ratio);
+
+  if (Math.abs(fighter.vx) < Math.abs(desiredVx)) fighter.vx = desiredVx;
+  if (Math.abs(fighter.vz) < Math.abs(desiredVz)) fighter.vz = desiredVz;
 }
