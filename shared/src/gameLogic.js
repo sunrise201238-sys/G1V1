@@ -208,8 +208,18 @@ function applyBoostDashAction({ attacker, now, move }) {
   return { applied: true };
 }
 
+function cancelBoostDashState(fighter) {
+  fighter.isBoostDashing = false;
+  fighter.isBoostInputHeld = false;
+  fighter.boostInputHoldUntil = 0;
+  fighter.dashEndsAt = 0;
+}
+
 function applyBoostStepAction({ attacker, now, move }) {
   if (attacker.isKO || attacker.isOverheated || attacker.boost < BOOST.stepCost) return { applied: false };
+
+  cancelBoostDashState(attacker);
+  transitionMomentum(attacker, now, { mode: 'cancel' });
 
   const angle = Math.atan2(move?.z ?? 0, move?.x ?? attacker.facing);
   attacker.x += Math.cos(angle) * BOOST.stepDistance;
@@ -233,6 +243,7 @@ function applyBoostStepAction({ attacker, now, move }) {
 
 function applyVerticalThrustAction({ attacker, now, vertical }) {
   if (attacker.isKO || attacker.isOverheated || vertical === 0 || attacker.boost <= 0) return { applied: false };
+  cancelBoostDashState(attacker);
   transitionMomentum(attacker, now, { mode: 'cancel' });
   const thrustFactor = vertical > 0 ? BOOST.riseThrustFactor * 0.3 : BOOST.dropThrustFactor;
   attacker.vy += vertical * BOOST.altitudeSpeed * thrustFactor;
@@ -249,6 +260,9 @@ function applyCombatAction({ attacker, defender, actionType, now, projectiles })
   const sinceLast = now - attacker.lastActionAt;
   const canCancel = now <= attacker.canCancelUntil;
   if (!canCancel && sinceLast < move.cooldownMs) return { applied: false, reason: 'cooldown' };
+
+  cancelBoostDashState(attacker);
+  transitionMomentum(attacker, now, { mode: 'cancel' });
 
   attacker.lastActionAt = now;
   attacker.lastActionType = actionType;

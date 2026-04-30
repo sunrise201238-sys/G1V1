@@ -194,3 +194,28 @@ test('airborne boost momentum keeps altitude fixed after dash ends', () => {
   tickMatch(match, 1450);
   assert.equal(p1.y, lockedY);
 });
+
+test('boost step cancels active boost dash state', () => {
+  const match = createMatchState();
+  const p1 = match.fighters.p1;
+  applyBoostDash(p1, { x: 1, z: 0, boosting: true }, 1000);
+  assert.equal(p1.isBoostDashing, true);
+
+  applyBoostStep(p1, { x: 0, z: 1 }, 1010);
+  assert.equal(p1.isBoostDashing, false);
+  assert.equal(p1.isBoostInputHeld, false);
+  assert.equal(p1.dashEndsAt, 0);
+});
+
+test('shoot during dash cancels dash and keeps shooting state', () => {
+  const match = createMatchState();
+  const p1 = match.fighters.p1;
+  const p2 = match.fighters.p2;
+
+  applyBoostDash(p1, { x: 1, z: 0 }, 1000);
+  const result = resolveAction(p1, p2, 'SHOOT', 1250, match.projectiles);
+
+  assert.equal(result.applied, true);
+  assert.equal(p1.isBoostDashing, false);
+  assert.equal(p1.actionState, 'shooting');
+});
