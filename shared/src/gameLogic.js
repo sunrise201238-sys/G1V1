@@ -204,12 +204,22 @@ function applyBoostDashAction({ attacker, now, move }) {
   attacker.lastActionAt = now;
   attacker.lastActionType = 'BOOST_DASH';
   suspendFall(attacker, now, BOOST.dashFallSuspendMs);
-  if (attacker.y > ARENA.minAltitude) engageAirStall(attacker, now, Infinity);
+  if (attacker.y > ARENA.minAltitude) engageAirStall(attacker, now, BOOST.boostAirNoFallMs);
   return { applied: true };
+}
+
+function cancelBoostDashState(fighter) {
+  fighter.isBoostDashing = false;
+  fighter.isBoostInputHeld = false;
+  fighter.boostInputHoldUntil = 0;
+  fighter.dashEndsAt = 0;
 }
 
 function applyBoostStepAction({ attacker, now, move }) {
   if (attacker.isKO || attacker.isOverheated || attacker.boost < BOOST.stepCost) return { applied: false };
+
+  cancelBoostDashState(attacker);
+  transitionMomentum(attacker, now, { mode: 'cancel' });
 
   const angle = Math.atan2(move?.z ?? 0, move?.x ?? attacker.facing);
   attacker.x += Math.cos(angle) * BOOST.stepDistance;
@@ -227,12 +237,13 @@ function applyBoostStepAction({ attacker, now, move }) {
     vz: Math.sin(angle) * BOOST.cruiseSpeed * BOOST.stepMomentumCarry
   });
   suspendFall(attacker, now, BOOST.cancelWindowMs);
-  if (attacker.y > ARENA.minAltitude) engageAirStall(attacker, now, Infinity);
+  if (attacker.y > ARENA.minAltitude) engageAirStall(attacker, now, BOOST.stepFallSuspendMs);
   return { applied: true };
 }
 
 function applyVerticalThrustAction({ attacker, now, vertical }) {
   if (attacker.isKO || attacker.isOverheated || vertical === 0 || attacker.boost <= 0) return { applied: false };
+  cancelBoostDashState(attacker);
   transitionMomentum(attacker, now, { mode: 'cancel' });
   const thrustFactor = vertical > 0 ? BOOST.riseThrustFactor * 0.3 : BOOST.dropThrustFactor;
   attacker.vy += vertical * BOOST.altitudeSpeed * thrustFactor;
@@ -249,6 +260,9 @@ function applyCombatAction({ attacker, defender, actionType, now, projectiles })
   const sinceLast = now - attacker.lastActionAt;
   const canCancel = now <= attacker.canCancelUntil;
   if (!canCancel && sinceLast < move.cooldownMs) return { applied: false, reason: 'cooldown' };
+
+  cancelBoostDashState(attacker);
+  transitionMomentum(attacker, now, { mode: 'cancel' });
 
   attacker.lastActionAt = now;
   attacker.lastActionType = actionType;
@@ -303,7 +317,7 @@ function createProjectile(attacker, defender, move, now) {
     travelled: 0,
     hitRadius: move.hitRadius,
     expiresAt: now + 3000,
-    isHoming: isWithinInitialHomingCone(attacker, defender, angle),
+    isHoming: isWithinInitialHomingCone(attacker, defender, baseAngle),
     homingBias: move.name === 'Scatter Shot' ? (Math.random() - 0.5) * 1.2 : 0,
     homingStrength: move.name === 'Scatter Shot' ? 0.2 : 1
   };
@@ -378,7 +392,11 @@ export function tickFighter(fighter, now = Date.now()) {
 
   const altitudeLocked = now <= (fighter.altitudeLockUntil ?? 0) || isAirStalled(fighter, now);
   const actionVerticalLocked = isActionVerticalLocked(fighter, now);
-  if (actionVerticalLocked) engageAirStall(fighter, now, Infinity);
+  if (actionVerticalLocked) {
+    const sustainUntil = Math.max(fighter.dashEndsAt ?? 0, fighter.momentumUntil ?? 0, fighter.canCancelUntil ?? 0);
+    const lockRemainingMs = Math.max(0, sustainUntil + BOOST.cancelWindowMs - now);
+    if (lockRemainingMs > 0) engageAirStall(fighter, now, lockRemainingMs);
+  }
   if (altitudeLocked) {
     fighter.vy = 0;
     fighter.y = isAirStalled(fighter, now) ? fighter.airStallY : fighter.altitudeLockY;
@@ -419,7 +437,8 @@ export function tickFighter(fighter, now = Date.now()) {
       });
       if (fighter.y > ARENA.minAltitude) {
         suspendFall(fighter, now, BOOST.cancelWindowMs);
-        engageAirStall(fighter, now, Infinity);
+        const dashLockRemainingMs = Math.max(0, fighter.dashEndsAt + BOOST.boostAirNoFallMs - now);
+        if (dashLockRemainingMs > 0) engageAirStall(fighter, now, dashLockRemainingMs);
       }
     }
     if (fighter.boost <= 0) {

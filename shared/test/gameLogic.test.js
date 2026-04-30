@@ -175,7 +175,7 @@ test('airborne boost keeps altitude fixed during boost lock window', () => {
   const p1 = match.fighters.p1;
   p1.y = 340;
   p1.vy = -5;
-  applyBoostDash(p1, { x: 1, z: 0, boosting: true }, 1000);
+  applyBoostDash(p1, { x: 1, z: 0 }, 1000);
   const y0 = p1.y;
   tickMatch(match, 1025);
   tickMatch(match, 1050);
@@ -193,4 +193,60 @@ test('airborne boost momentum keeps altitude fixed after dash ends', () => {
   tickMatch(match, 1300); // dash should have ended, momentum active
   tickMatch(match, 1450);
   assert.equal(p1.y, lockedY);
+});
+
+test('boost step cancels active boost dash state', () => {
+  const match = createMatchState();
+  const p1 = match.fighters.p1;
+  applyBoostDash(p1, { x: 1, z: 0 }, 1000);
+  assert.equal(p1.isBoostDashing, true);
+
+  applyBoostStep(p1, { x: 0, z: 1 }, 1010);
+  assert.equal(p1.isBoostDashing, false);
+  assert.equal(p1.isBoostInputHeld, false);
+  assert.equal(p1.dashEndsAt, 0);
+});
+
+test('shoot during dash cancels dash and keeps shooting state', () => {
+  const match = createMatchState();
+  const p1 = match.fighters.p1;
+  const p2 = match.fighters.p2;
+
+  applyBoostDash(p1, { x: 1, z: 0 }, 1000);
+  const result = resolveAction(p1, p2, 'SHOOT', 1250, match.projectiles);
+
+  assert.equal(result.applied, true);
+  assert.equal(p1.isBoostDashing, false);
+  assert.equal(p1.actionState, 'shooting');
+});
+
+test('airborne boost lock does not extend indefinitely on delayed ticks', () => {
+  const match = createMatchState();
+  const p1 = match.fighters.p1;
+  p1.y = 360;
+  p1.vy = -2;
+
+  applyBoostDash(p1, { x: 1, z: 0 }, 1000);
+  tickMatch(match, 1000 + BOOST.boostAirNoFallMs + 25);
+  assert.equal(p1.isBoostDashing, false);
+  assert.equal(Number.isFinite(p1.airStallUntil), true);
+});
+
+test('scatter shot in red-lock range keeps homing despite pellet spread', () => {
+  const match = createMatchState();
+  const p1 = match.fighters.p1;
+  const p2 = match.fighters.p2;
+  p2.x = p1.x + 280;
+  p2.z = p1.z;
+
+  const originalRandom = Math.random;
+  Math.random = () => 0.99; // maximize spread to emulate edge pellet angles
+  try {
+    const result = resolveAction(p1, p2, 'SUB_SHOOT', 1000, match.projectiles);
+    assert.equal(result.applied, true);
+    assert.equal(match.projectiles.length, 1);
+    assert.equal(match.projectiles[0].isHoming, true);
+  } finally {
+    Math.random = originalRandom;
+  }
 });
