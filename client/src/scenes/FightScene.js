@@ -1,4 +1,3 @@
-import { io } from 'socket.io-client';
 import {
   BOOST,
   createMatchState,
@@ -23,7 +22,7 @@ export class FightScene extends Phaser.Scene {
   init(data) {
     this.playerCharacter = data.playerCharacter;
     this.enemyCharacter = data.enemyCharacter;
-    this.mode = data.mode || 'bot';
+    this.mode = 'bot';
   }
 
   create() {
@@ -50,9 +49,7 @@ export class FightScene extends Phaser.Scene {
     this.inputBuffer = createInputBuffer(12);
     this.touch = this.createTouchControls();
 
-    this.socket = null;
     this.snapshotBuffer = [];
-    if (this.mode === 'online') this.setupSocket();
 
     this.isKOSequence = false;
     this.koWinner = null;
@@ -202,13 +199,7 @@ export class FightScene extends Phaser.Scene {
     state.z = Math.sin(angle) * (length / 60);
   }
 
-  setupSocket() {
-    this.socket = io(import.meta.env.VITE_SERVER_URL || 'http://localhost:3001');
-    this.socket.on('match:snapshot', (snapshot) => {
-      this.snapshotBuffer.push(snapshot);
-      while (this.snapshotBuffer.length > 24) this.snapshotBuffer.shift();
-    });
-  }
+  setupSocket() {}
 
   get player() {
     return this.match.fighters.p1;
@@ -227,8 +218,7 @@ export class FightScene extends Phaser.Scene {
     this.handleBufferedInputs();
     this.handleMovement();
 
-    if (this.mode === 'online') this.applySnapshotInterpolation(Date.now());
-    else tickMatch(this.match, Date.now());
+    tickMatch(this.match, Date.now());
 
     this.updateFollowCam();
     this.renderFighters();
@@ -245,43 +235,29 @@ export class FightScene extends Phaser.Scene {
 
     for (const input of inputs) {
       if (input.type === 'BOOST_DASH') {
-        if (this.mode === 'online') this.socket?.emit('input:action', { type: 'BOOST_DASH', move });
-        else this.tryDash(move);
+        this.tryDash(move);
         continue;
       }
 
       if (input.type === 'BOOST_STEP') {
-        if (this.mode === 'online') {
-          this.socket?.emit('input:action', { type: 'BOOST_STEP', move });
-        } else {
-          const ok = applyBoostStep(this.player, move, now);
-          if (ok) this.spawnStepDistortion();
-        }
+        const ok = applyBoostStep(this.player, move, now);
+        if (ok) this.spawnStepDistortion();
         continue;
       }
 
       if (input.type === 'VERTICAL_THRUST') {
-        if (this.mode === 'online') this.socket?.emit('input:action', { type: 'VERTICAL_THRUST', vertical: input.vertical });
-        else applyVerticalThrust(this.player, input.vertical, now);
+        applyVerticalThrust(this.player, input.vertical, now);
         continue;
       }
 
-      if (this.mode === 'online') this.socket?.emit('input:action', { type: input.type });
-      else {
-        const result = resolveAction(this.player, this.enemy, input.type, now, this.match.projectiles);
-        if (result.applied) this.cameras.main.shake(70, 0.005);
-      }
+      const result = resolveAction(this.player, this.enemy, input.type, now, this.match.projectiles);
+      if (result.applied) this.cameras.main.shake(70, 0.005);
     }
   }
 
   handleMovement() {
     const move = this.touch.state;
     if (Math.hypot(move.x, move.z) < 0.1) return;
-
-    if (this.mode === 'online') {
-      this.socket?.emit('input:action', { type: 'MOVE_VECTOR', move });
-      return;
-    }
 
     if (!applyMoveVector(this.player, move, Date.now())) return;
     if (move.dashGesture || move.boosting) this.tryDash(move);

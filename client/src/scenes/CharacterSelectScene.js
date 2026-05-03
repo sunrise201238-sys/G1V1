@@ -20,7 +20,7 @@ export class CharacterSelectScene extends Phaser.Scene {
 
   create() {
     this.add.text(640, 80, 'NEON GVG 1V1', { fontSize: '54px', color: '#80ffff' }).setOrigin(0.5);
-    this.add.text(640, 130, 'Select your fighter (VS Bot focus, online-ready architecture)', {
+    this.add.text(640, 130, 'Select your fighter (client-side battle)', {
       fontSize: '20px',
       color: '#c6d8ff'
     }).setOrigin(0.5);
