@@ -27,7 +27,7 @@ const UNIT_DATA = {
 
 const MAP_DATA = {
   arena1: { name: 'Map 1 / Arena' },
-  arena2: { name: 'Map 2 / Placeholder' }
+  arena2: { name: 'Map 2 / Urban Plaza' }
 };
 
 const state = {
@@ -65,7 +65,7 @@ const key = new THREE.DirectionalLight(0xe5eeff, 1.15);
 key.position.set(18, 34, 12);
 scene.add(key);
 
-const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -53.46, 0) });
+const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -80.19, 0) });
 world.broadphase = new CANNON.SAPBroadphase(world);
 world.allowSleep = true;
 const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Box(new CANNON.Vec3(140, 0.25, 140)) });
@@ -118,6 +118,8 @@ ground.rotation.x = -Math.PI / 2;
 scene.add(ground);
 const gridHelper = new THREE.GridHelper(200, 50, 0xff0000, 0x444444);
 scene.add(gridHelper);
+const arenaDecor = [];
+const arenaObstacles = [];
 createArenaWalls();
 
 const MOMENTUM_STANDARD = 100;
@@ -139,11 +141,22 @@ const input = {
   y: 0,
   boost: false,
   boostHeld: false,
+  sprintLocked: false,
   jump: false,
   stepTap: false,
   shootTap: false,
-  shootHold: false,
-  meleeTap: false
+  shootHold: false
+};
+
+const keyState = {
+  up: false,
+  down: false,
+  left: false,
+  right: false,
+  w: false,
+  a: false,
+  s: false,
+  d: false
 };
 
 function createMech(color, unitData) {
@@ -269,11 +282,11 @@ function setupHUD() {
   `;
   app.appendChild(hud);
 
-  ['boost', 'shoot', 'melee', 'step', 'jump'].forEach((action) => {
+  ['boost', 'shoot', 'step', 'jump'].forEach((action) => {
     const b = document.createElement('button');
     b.dataset.k = action;
     b.className = `btn-${action}`;
-    b.textContent = action.toUpperCase();
+    b.textContent = action === 'boost' ? 'SPRINT' : (action === 'step' ? 'DODGE' : action.toUpperCase());
     hud.querySelector('#buttons').appendChild(b);
   });
 
@@ -281,6 +294,7 @@ function setupHUD() {
   const stick = joy.querySelector('.stick');
   let pointerId = null;
   let lastTapAt = 0;
+  let lastSprintTapAt = 0;
 
   const applyStick = (x, y) => {
     const r = joy.getBoundingClientRect();
@@ -312,6 +326,7 @@ function setupHUD() {
     pointerId = null;
     input.x = 0;
     input.y = 0;
+    input.sprintLocked = false;
     input.boost = false;
     input.boostHeld = false;
     stick.style.transform = 'translate(0px,0px)';
@@ -325,9 +340,12 @@ function setupHUD() {
         input.shootTap = true;
         input.shootHold = true;
       }
-      else if (k === 'melee') input.meleeTap = true;
       else if (k === 'step') input.stepTap = true;
       else if (k === 'boost') {
+        const now = performance.now();
+        const hasDir = Math.hypot(input.x, input.y) > 0.15;
+        if (now - lastSprintTapAt < 260 && hasDir) input.sprintLocked = true;
+        lastSprintTapAt = now;
         input.boostHeld = true;
         input.boost = true;
       } else input[k] = true;
@@ -336,8 +354,8 @@ function setupHUD() {
       if (k === 'shoot') input.shootHold = false;
       else if (k === 'boost') {
         input.boostHeld = false;
-        input.boost = false;
-      } else if (k !== 'melee') input[k] = false;
+        if (!input.sprintLocked) input.boost = false;
+      } else input[k] = false;
     });
   });
 
@@ -460,6 +478,21 @@ function updateProjectileSystem(dt) {
 
     const prevPos = p.mesh.position.clone();
     p.mesh.position.addScaledVector(p.vel, dt);
+    for (const obstacle of arenaDecor) {
+      if (!obstacle.userData?.blocking) continue;
+      const half = obstacle.geometry.parameters ? { x: obstacle.geometry.parameters.width / 2, y: obstacle.geometry.parameters.height / 2, z: obstacle.geometry.parameters.depth / 2 } : null;
+      if (!half) continue;
+      const ox = obstacle.position.x; const oy = obstacle.position.y; const oz = obstacle.position.z;
+      if (Math.abs(p.mesh.position.x - ox) <= half.x && Math.abs(p.mesh.position.y - oy) <= half.y && Math.abs(p.mesh.position.z - oz) <= half.z) {
+        scene.remove(p.mesh);
+        p.mesh.geometry.dispose();
+        p.mesh.material.dispose();
+        state.projectiles.splice(i, 1);
+        p.ttl = 0;
+        break;
+      }
+    }
+    if (p.ttl <= 0) continue;
     const hitRadius = p.target.state.vulnerabilityMove ? 2.25 : 1.6;
     const path = new THREE.Line3(prevPos, p.mesh.position.clone());
     const nearest = new THREE.Vector3();
@@ -471,11 +504,6 @@ function updateProjectileSystem(dt) {
       p.target.state.momentumVX = 0;
       p.target.state.momentumVZ = 0;
       spawnHitEffect(p.target.root.position, p.target === state.player ? 0x67f2ff : 0xff73d2);
-      if (p.target.state.action === 'melee-lunge') {
-        p.target.state.action = 'stagger';
-        p.target.state.staggerUntil = now + 280;
-        p.target.state.meleeLungeUntil = 0;
-      }
       p.target.body.velocity.set(0, 0, 0);
       scene.remove(p.mesh);
       state.projectiles.splice(i, 1);
@@ -537,15 +565,11 @@ function updatePlayer(now) {
   const p = state.player.root.position;
   const e = state.enemy.root.position;
   const stepState = state.player.state;
-  const inMeleeLunge = now <= state.player.state.meleeLungeUntil;
   const inStep = now <= stepState.stepUntil;
-  input.boost = input.boostHeld;
+  const hasDirInput = Math.hypot(input.x, input.y) > 0.15;
+  if (!hasDirInput || input.jump || input.stepTap || state.player.state.boost <= 0) input.sprintLocked = false;
+  input.boost = input.boostHeld || input.sprintLocked;
 
-  if (inMeleeLunge) {
-    state.player.body.velocity.x = state.player.state.meleeLungeVX;
-    state.player.body.velocity.z = state.player.state.meleeLungeVZ;
-    if (state.speedLines) state.speedLines.style.opacity = '1';
-  }
   const forward = new THREE.Vector3();
   camera.getWorldDirection(forward);
   forward.y = 0;
@@ -558,7 +582,7 @@ function updatePlayer(now) {
   const hitStunScale = now < state.player.state.hitStunUntil ? 0.25 : 1;
   const emptyPenaltyActive = now < state.player.state.emptyRecoverUntil;
   const canInputMove = state.player.state.boost > 0 && !emptyPenaltyActive;
-  if (!inMeleeLunge && !inStep) {
+  if (!inStep) {
     state.player.body.velocity.x = canInputMove ? move.x * speed * hitStunScale : 0;
     state.player.body.velocity.z = canInputMove ? move.z * speed * hitStunScale : 0;
   }
@@ -619,6 +643,7 @@ function updatePlayer(now) {
       state.player.state.momentumVX = 0;
       state.player.state.momentumVZ = 0;
       state.player.state.boost = Math.max(0, state.player.state.boost - STEP_BOOST_COST);
+      input.sprintLocked = false;
       state.player.state.refillPausedUntil = now + 500;
       clearIncomingHoming(state.player, now);
       action = 'step';
@@ -646,52 +671,6 @@ function updatePlayer(now) {
   }
   if (!input.shootHold) state.player.state.machineBurstRemaining = 0;
 
-  if (input.meleeTap) {
-    input.boost = false;
-    if (state.player.state.redLock && now >= state.player.state.meleeCooldownUntil) {
-      const distance = p.distanceTo(e);
-      if (distance > state.player.unit.lockRange) {
-        input.meleeTap = false;
-        updateBoost(state.player, now, action);
-        return;
-      }
-      const lunge = new THREE.Vector3().subVectors(e, p).setY(0).normalize();
-      state.player.state.meleeLungeVX = lunge.x * 22;
-      state.player.state.meleeLungeVZ = lunge.z * 22;
-      state.player.body.velocity.x = state.player.state.meleeLungeVX;
-      state.player.body.velocity.z = state.player.state.meleeLungeVZ;
-      state.player.state.meleeAnimUntil = now + 220;
-      state.player.state.meleeLungeUntil = now + 320;
-      state.player.state.meleeStrikeUntil = now + 320;
-      state.player.state.meleeHitApplied = false;
-      state.player.state.meleeCooldownUntil = now + 1000;
-    inheritMomentum(state.player, MOMENTUM_STANDARD * 1.5);
-      action = 'melee-lunge';
-      spawnMeleeHitboxVisual(state.player, 0x66ffcc, 1.4);
-      if (state.speedLines) state.speedLines.style.opacity = '1';
-    } else if (!state.player.state.redLock) {
-      action = 'melee-whiff';
-    }
-    input.meleeTap = false;
-  }
-
-  if (state.player.state.action === 'melee-lunge' && now <= state.player.state.meleeStrikeUntil && !state.player.state.meleeHitApplied) {
-    const hitboxCenter = getMeleeHitboxCenter(state.player, 2.55);
-    if (hitboxCenter.distanceTo(e) <= 3.2) {
-      state.enemy.state.hp = Math.max(0, state.enemy.state.hp - 18);
-      if (now >= state.enemy.state.hitStunUntil) state.enemy.state.hitStunUntil = now + 260;
-      state.enemy.state.momentumVX = 0;
-      state.enemy.state.momentumVZ = 0;
-      state.player.state.meleeHitApplied = true;
-      spawnHitEffect(state.enemy.root.position, 0xff73d2);
-      spawnMeleeHitboxVisual(state.player, 0xff8ec8, 1.75);
-      if (state.speedLines) state.speedLines.style.opacity = '1';
-    }
-  }
-  if (!inMeleeLunge && state.player.state.action === 'melee-lunge') {
-    state.player.state.meleeLungeVX = 0;
-    state.player.state.meleeLungeVZ = 0;
-  }
   if (state.player.grounded) {
     state.player.body.position.y = 2.45;
     state.player.body.velocity.y = 0;
@@ -759,7 +738,7 @@ function updateEnemy(now) {
   if (dist < 7.2 && now > state.player.state.antiMeleeUntil && Math.random() > 0.82) {
     state.enemy.body.velocity.x += dir.x * 16;
     state.enemy.body.velocity.z += dir.z * 16;
-    state.enemy.state.action = 'melee-lunge';
+    state.enemy.state.action = 'dash';
   }
   if (state.enemy.grounded && now > state.enemy.state.hoverUntil && state.enemy.state.action !== 'jump') {
     state.enemy.body.velocity.y = 0;
@@ -816,20 +795,12 @@ function updateTransforms(dt) {
   state.enemy.root.rotation.y = Math.atan2(-pToE.x, -pToE.z);
 
   [state.player, state.enemy].forEach((m) => {
-    if (performance.now() < m.state.meleeAnimUntil) {
-      m.arms.left.rotation.x = -1.65;
-      m.arms.right.rotation.x = -1.65;
-      m.arms.left.rotation.z = -0.25;
-      m.arms.right.rotation.z = 0.25;
-    } else {
-      m.arms.left.rotation.x = 0;
-      m.arms.right.rotation.x = 0;
-      m.arms.left.rotation.z = 0;
-      m.arms.right.rotation.z = 0;
-    }
-    m.root.rotation.x = m.state.action === 'melee-lunge' ? -0.22 : 0;
+    m.arms.left.rotation.x = 0;
+    m.arms.right.rotation.x = 0;
+    m.arms.left.rotation.z = 0;
+    m.arms.right.rotation.z = 0;
+    m.root.rotation.x = 0;
     if (performance.now() < m.state.staggerUntil) m.root.rotation.x = 0.18;
-    if (m.state.action === 'melee-lunge' && performance.now() > m.state.meleeLungeUntil) m.state.action = 'idle';
     if (m.state.action === 'stagger' && performance.now() > m.state.staggerUntil) m.state.action = 'idle';
     if (!['dash'].includes(m.state.action)) return;
     const puff = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 6), new THREE.MeshBasicMaterial({ color: 0x7efbff, transparent: true, opacity: 0.4 }));
@@ -873,7 +844,7 @@ function updateHud() {
   hudRefs.enemyHp.style.width = `${state.enemy.state.hp}%`;
   hudRefs.boost.style.width = `${(state.player.state.boost / BOOST_CAP) * 100}%`;
   hudRefs.boost.style.background = state.player.state.overheatedUntil > performance.now() ? '#ff8c45' : '#90ff63';
-  if (state.speedLines && performance.now() > state.player.state.meleeLungeUntil) state.speedLines.style.opacity = '0';
+  if (state.speedLines) state.speedLines.style.opacity = '0';
 }
 
 function cleanupMatch() {
@@ -898,6 +869,7 @@ function startMatch() {
   state.enemy = createMech(0xff7ad5, UNIT_DATA[state.enemyUnitKey]);
   state.player.body.position.set(-8, 2.45, 0);
   state.enemy.body.position.set(8, 2.45, 0);
+  buildArenaForMap(state.mapKey);
   const now = performance.now();
   state.player.state.lastFireAt = now;
   state.enemy.state.lastFireAt = now;
@@ -987,6 +959,48 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+let lastSprintKeyAt = 0;
+window.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  const k = e.key.toLowerCase();
+  if (k === 'w' || e.key === 'ArrowUp') { keyState.up = true; if (k === 'w') keyState.w = true; }
+  else if (k === 's' || e.key === 'ArrowDown') { keyState.down = true; if (k === 's') keyState.s = true; }
+  else if (k === 'a' || e.key === 'ArrowLeft') { keyState.left = true; if (k === 'a') keyState.a = true; }
+  else if (k === 'd' || e.key === 'ArrowRight') { keyState.right = true; if (k === 'd') keyState.d = true; }
+  else if (k === ' ') input.jump = true;
+  else if (k === 'k') {
+    const now = performance.now();
+    const hasDir = Math.hypot(input.x, input.y) > 0.15;
+    if (now - lastSprintKeyAt < 260 && hasDir) input.sprintLocked = true;
+    lastSprintKeyAt = now;
+    input.boostHeld = true; input.boost = true;
+  }
+  else if (k === 'l') input.stepTap = true;
+  else if (k === 'j') { input.shootTap = true; input.shootHold = true; }
+});
+
+window.addEventListener('keyup', (e) => {
+  const k = e.key.toLowerCase();
+  if (k === 'w' || e.key === 'ArrowUp') { keyState.up = false; if (k === 'w') keyState.w = false; }
+  else if (k === 's' || e.key === 'ArrowDown') { keyState.down = false; if (k === 's') keyState.s = false; }
+  else if (k === 'a' || e.key === 'ArrowLeft') { keyState.left = false; if (k === 'a') keyState.a = false; }
+  else if (k === 'd' || e.key === 'ArrowRight') { keyState.right = false; if (k === 'd') keyState.d = false; }
+  else if (k === ' ') input.jump = false;
+  else if (k === 'k') { input.boostHeld = false; if (!input.sprintLocked) input.boost = false; }
+  else if (k === 'j') input.shootHold = false;
+  const hasWASD = keyState.w || keyState.a || keyState.s || keyState.d;
+  if (!hasWASD) input.sprintLocked = false;
+});
+
+function syncKeyboardMovement() {
+  const x = (keyState.right ? 1 : 0) - (keyState.left ? 1 : 0);
+  const y = (keyState.down ? 1 : 0) - (keyState.up ? 1 : 0);
+  if (x === 0 && y === 0) return;
+  const len = Math.hypot(x, y) || 1;
+  input.x = x / len;
+  input.y = y / len;
+}
+
 setupRootTouchAction();
 showSelectMenu();
 animate();
@@ -1044,11 +1058,6 @@ function clearIncomingHoming(mech, now) {
 
 function triggerDashDefense(now) {
   state.player.state.dashRecoverUntil = now + 180;
-  if (state.enemy.state.action === 'melee-lunge') {
-    state.enemy.state.action = 'stagger';
-    state.enemy.state.staggerUntil = now + 180;
-    state.enemy.state.meleeLungeUntil = 0;
-  }
 }
 
 function PhaserLikeBetween(min, max) {
@@ -1127,6 +1136,58 @@ function applyMomentum(mech, { suspend = false } = {}) {
   if (Math.abs(mech.state.momentumVZ) < 0.02) mech.state.momentumVZ = 0;
 }
 
+
+function clearArenaDecor() {
+  while (arenaDecor.length) {
+    const obj = arenaDecor.pop();
+    scene.remove(obj);
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) {
+      if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
+      else obj.material.dispose();
+    }
+  }
+  arenaObstacles.length = 0;
+}
+
+function addBlockingBox({ x, y, z, sx, sy, sz, material }) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), material);
+  mesh.position.set(x, y, z);
+  mesh.userData.blocking = true;
+  scene.add(mesh);
+  arenaDecor.push(mesh);
+  arenaObstacles.push({ minX: x - sx / 2, maxX: x + sx / 2, minZ: z - sz / 2, maxZ: z + sz / 2, minY: y - sy / 2, maxY: y + sy / 2 });
+  return mesh;
+}
+
+function buildArenaForMap(mapKey) {
+  clearArenaDecor();
+  if (mapKey !== 'arena2') return;
+  const road = new THREE.MeshStandardMaterial({ color: 0x2b3342, roughness: 0.88 });
+  const curb = new THREE.MeshStandardMaterial({ color: 0x9198a7, roughness: 0.8 });
+  const block = new THREE.MeshStandardMaterial({ color: 0xc9b04a, roughness: 0.75 });
+  const deco = new THREE.MeshStandardMaterial({ color: 0x4c7aa8, roughness: 0.7 });
+
+  const base = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), road);
+  base.rotation.x = -Math.PI / 2; base.position.y = 0.01; scene.add(base); arenaDecor.push(base);
+
+  addBlockingBox({ x: 0, y: 0.5, z: 0, sx: 20, sy: 1, sz: 150, material: curb });
+  addBlockingBox({ x: 0, y: 0.5, z: 0, sx: 150, sy: 1, sz: 20, material: curb });
+
+  for (let i = -3; i <= 3; i += 1) {
+    addBlockingBox({ x: i * 18, y: 3.4, z: -26, sx: 6, sy: 6.8, sz: 3.5, material: block });
+    addBlockingBox({ x: i * 18, y: 3.4, z: 26, sx: 6, sy: 6.8, sz: 3.5, material: block });
+  }
+
+  addBlockingBox({ x: -44, y: 4.5, z: 44, sx: 24, sy: 9, sz: 10, material: deco });
+  addBlockingBox({ x: 44, y: 4.5, z: -44, sx: 24, sy: 9, sz: 10, material: deco });
+  addBlockingBox({ x: -44, y: 4.5, z: -44, sx: 10, sy: 9, sz: 24, material: deco });
+  addBlockingBox({ x: 44, y: 4.5, z: 44, sx: 10, sy: 9, sz: 24, material: deco });
+
+  addBlockingBox({ x: -2, y: 0.8, z: -55, sx: 18, sy: 1.6, sz: 8, material: curb });
+  addBlockingBox({ x: 2, y: 0.8, z: 55, sx: 18, sy: 1.6, sz: 8, material: curb });
+}
+
 function createArenaWalls() {
   const WALL_HEIGHT = 16;
   const HALF = 138;
@@ -1153,6 +1214,25 @@ function wrapAngle(angle) {
   return angle;
 }
 
+function resolveUnitObstacleCollisions(mech) {
+  const radius = 1.15;
+  const pos = mech.body.position;
+  for (const o of arenaObstacles) {
+    if (pos.y < o.minY - 2 || pos.y > o.maxY + 4) continue;
+    const nearestX = Math.max(o.minX, Math.min(pos.x, o.maxX));
+    const nearestZ = Math.max(o.minZ, Math.min(pos.z, o.maxZ));
+    const dx = pos.x - nearestX;
+    const dz = pos.z - nearestZ;
+    const d2 = dx * dx + dz * dz;
+    if (d2 >= radius * radius) continue;
+    const d = Math.sqrt(d2) || 0.0001;
+    const push = radius - d;
+    pos.x += (dx / d) * push;
+    pos.z += (dz / d) * push;
+    mech.body.velocity.x = 0; mech.body.velocity.z = 0;
+  }
+}
+
 function updateVfx(dt) {
   state.vfx = state.vfx.filter((vfx) => {
     vfx.life -= dt;
@@ -1177,10 +1257,13 @@ function animate() {
     const now = performance.now();
 
     if (state.running) {
+      syncKeyboardMovement();
       updatePlayer(now);
       updateEnemy(now);
       applyRepulsion(now);
       world.step(1 / 60, dt, 3);
+      resolveUnitObstacleCollisions(state.player);
+      resolveUnitObstacleCollisions(state.enemy);
 
       updateTransforms(dt);
       updateLocksAndReticle();
