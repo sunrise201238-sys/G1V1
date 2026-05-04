@@ -994,13 +994,11 @@ window.addEventListener('keyup', (e) => {
 });
 
 function syncKeyboardMovement() {
+  const hasKeyboardDir = keyState.up || keyState.down || keyState.left || keyState.right;
+  if (!hasKeyboardDir) return;
+
   const x = (keyState.right ? 1 : 0) - (keyState.left ? 1 : 0);
   const y = (keyState.down ? 1 : 0) - (keyState.up ? 1 : 0);
-  if (x === 0 && y === 0) {
-    input.x = 0;
-    input.y = 0;
-    return;
-  }
   const len = Math.hypot(x, y) || 1;
   input.x = x / len;
   input.y = y / len;
