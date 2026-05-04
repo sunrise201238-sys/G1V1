@@ -12,18 +12,16 @@ const UNIT_DATA = {
     fireCooldownMs: 140,
     spreadCount: 1,
     spreadAngle: 0.02,
-    damage: 4,
-    homingTurn: 0.14
+    damage: 4
   },
   unit2: {
     name: 'Unit 2 / Shotgun',
-    lockRange: 16,
-    projectileSpeed: 38,
-    fireCooldownMs: 520,
-    spreadCount: 5,
-    spreadAngle: Math.PI / 12,
-    damage: 5,
-    homingTurn: 0.08
+    lockRange: 28,
+    projectileSpeed: 45,
+    fireCooldownMs: 140,
+    spreadCount: 8,
+    spreadAngle: Math.PI / 3,
+    damage: 4
   }
 };
 
@@ -348,10 +346,14 @@ function spawnProjectiles(owner, target) {
   owner.state.lastFireAt = now;
 
   const baseDir = new THREE.Vector3().subVectors(target.root.position, owner.root.position).normalize();
+  const isShotgun = owner.unit.spreadCount > 1;
+  const centerIndex = isShotgun ? Math.floor(Math.random() * owner.unit.spreadCount) : 0;
 
   for (let i = 0; i < owner.unit.spreadCount; i += 1) {
-    const yaw = (Math.random() - 0.5) * owner.unit.spreadAngle;
-    const pitch = (Math.random() - 0.5) * owner.unit.spreadAngle * 0.35;
+    const isCenterPellet = isShotgun && i === centerIndex;
+    const spreadScale = isShotgun ? (isCenterPellet ? 0.08 : 1) : 1;
+    const yaw = (Math.random() - 0.5) * owner.unit.spreadAngle * spreadScale;
+    const pitch = (Math.random() - 0.5) * owner.unit.spreadAngle * 0.35 * spreadScale;
     const dir = baseDir.clone()
       .applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw)
       .applyAxisAngle(new THREE.Vector3(1, 0, 0), pitch);
@@ -360,13 +362,13 @@ function spawnProjectiles(owner, target) {
     mesh.position.copy(owner.root.position).add(new THREE.Vector3(0, 0.8, 0));
     scene.add(mesh);
 
+    const homing = owner.state.redLock && (!isShotgun || isCenterPellet);
     state.projectiles.push({
       owner,
       target,
       mesh,
       vel: dir.multiplyScalar(owner.unit.projectileSpeed),
-      homing: owner.state.redLock,
-      homingTurn: owner.state.redLock ? owner.unit.homingTurn : 0,
+      homing,
       homingLost: false,
       ttl: 2.2,
       damage: owner.unit.damage,
