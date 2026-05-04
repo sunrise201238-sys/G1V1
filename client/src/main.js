@@ -18,10 +18,10 @@ const UNIT_DATA = {
     name: 'Unit 2 / Shotgun',
     lockRange: 56,
     projectileSpeed: 45,
-    fireCooldownMs: 1000,
+    fireCooldownMs: 700,
     spreadCount: 8,
     spreadAngle: THREE.MathUtils.degToRad(16),
-    damage: 3
+    damage: 5
   }
 };
 
