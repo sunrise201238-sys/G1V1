@@ -149,15 +149,13 @@ const input = {
   shootHold: false
 };
 
+let touchSteeringActive = false;
+
 const keyState = {
   up: false,
   down: false,
   left: false,
-  right: false,
-  w: false,
-  a: false,
-  s: false,
-  d: false
+  right: false
 };
 
 function createMech(color, unitData) {
@@ -314,6 +312,7 @@ function setupHUD() {
     if (now - lastTapAt < 240) input.boost = true;
     lastTapAt = now;
     pointerId = e.pointerId;
+    touchSteeringActive = true;
     applyStick(e.clientX, e.clientY);
   });
 
@@ -325,6 +324,7 @@ function setupHUD() {
   window.addEventListener('pointerup', (e) => {
     if (pointerId !== e.pointerId) return;
     pointerId = null;
+    touchSteeringActive = false;
     input.x = 0;
     input.y = 0;
     input.sprintLocked = false;
@@ -964,10 +964,10 @@ let lastSprintKeyAt = 0;
 window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   const k = e.key.toLowerCase();
-  if (k === 'w' || e.key === 'ArrowUp') { keyState.up = true; if (k === 'w') keyState.w = true; }
-  else if (k === 's' || e.key === 'ArrowDown') { keyState.down = true; if (k === 's') keyState.s = true; }
-  else if (k === 'a' || e.key === 'ArrowLeft') { keyState.left = true; if (k === 'a') keyState.a = true; }
-  else if (k === 'd' || e.key === 'ArrowRight') { keyState.right = true; if (k === 'd') keyState.d = true; }
+  if (k === 'w' || e.key === 'ArrowUp') keyState.up = true;
+  else if (k === 's' || e.key === 'ArrowDown') keyState.down = true;
+  else if (k === 'a' || e.key === 'ArrowLeft') keyState.left = true;
+  else if (k === 'd' || e.key === 'ArrowRight') keyState.right = true;
   else if (k === ' ') input.jump = true;
   else if (k === 'k') {
     const now = performance.now();
@@ -982,25 +982,29 @@ window.addEventListener('keydown', (e) => {
 
 window.addEventListener('keyup', (e) => {
   const k = e.key.toLowerCase();
-  if (k === 'w' || e.key === 'ArrowUp') { keyState.up = false; if (k === 'w') keyState.w = false; }
-  else if (k === 's' || e.key === 'ArrowDown') { keyState.down = false; if (k === 's') keyState.s = false; }
-  else if (k === 'a' || e.key === 'ArrowLeft') { keyState.left = false; if (k === 'a') keyState.a = false; }
-  else if (k === 'd' || e.key === 'ArrowRight') { keyState.right = false; if (k === 'd') keyState.d = false; }
+  if (k === 'w' || e.key === 'ArrowUp') keyState.up = false;
+  else if (k === 's' || e.key === 'ArrowDown') keyState.down = false;
+  else if (k === 'a' || e.key === 'ArrowLeft') keyState.left = false;
+  else if (k === 'd' || e.key === 'ArrowRight') keyState.right = false;
   else if (k === ' ') input.jump = false;
   else if (k === 'k') { input.boostHeld = false; if (!input.sprintLocked) input.boost = false; }
   else if (k === 'j') input.shootHold = false;
-  const hasWASD = keyState.w || keyState.a || keyState.s || keyState.d;
-  if (!hasWASD) input.sprintLocked = false;
+  const hasKeyboardDir = keyState.up || keyState.down || keyState.left || keyState.right;
+  if (!hasKeyboardDir) input.sprintLocked = false;
 });
 
 function syncKeyboardMovement() {
-  const x = (keyState.right ? 1 : 0) - (keyState.left ? 1 : 0);
-  const y = (keyState.down ? 1 : 0) - (keyState.up ? 1 : 0);
-  if (x === 0 && y === 0) {
-    input.x = 0;
-    input.y = 0;
+  const hasKeyboardDir = keyState.up || keyState.down || keyState.left || keyState.right;
+  if (!hasKeyboardDir) {
+    if (!touchSteeringActive) {
+      input.x = 0;
+      input.y = 0;
+    }
     return;
   }
+
+  const x = (keyState.right ? 1 : 0) - (keyState.left ? 1 : 0);
+  const y = (keyState.down ? 1 : 0) - (keyState.up ? 1 : 0);
   const len = Math.hypot(x, y) || 1;
   input.x = x / len;
   input.y = y / len;
