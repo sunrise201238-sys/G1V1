@@ -161,8 +161,26 @@ const keyState = {
 
 function createMech(color, unitData) {
   const root = new THREE.Group();
-  const armor = new THREE.MeshToonMaterial({ color });
-  const steel = new THREE.MeshToonMaterial({ color: 0x3b4658 });
+  const isMachineGun = unitData.spreadCount === 1;
+  const palette = isMachineGun
+    ? {
+      armor: 0x4f8cff,
+      coat: 0xc4d9ff,
+      dark: 0x1f2e52,
+      accent: 0x7ed8ff,
+      glow: 0x7efbff
+    }
+    : {
+      armor: 0x9b6cff,
+      coat: 0xd8c3ff,
+      dark: 0x32214d,
+      accent: 0xff88f8,
+      glow: 0xff84f6
+    };
+  const armor = new THREE.MeshToonMaterial({ color: palette.armor });
+  const coat = new THREE.MeshToonMaterial({ color: palette.coat });
+  const steel = new THREE.MeshToonMaterial({ color: palette.dark });
+  const accent = new THREE.MeshToonMaterial({ color: palette.accent });
   const make = (g, m, x, y, z) => {
     const mesh = new THREE.Mesh(g, m);
     mesh.position.set(x, y, z);
@@ -170,16 +188,32 @@ function createMech(color, unitData) {
     return mesh;
   };
 
-  const torso = make(new THREE.BoxGeometry(1.85, 2.55, 1.05), armor, 0, 0, 0);
-  make(new THREE.BoxGeometry(0.95, 0.82, 0.9), steel, 0, 1.85, 0);
-  make(new THREE.BoxGeometry(0.95, 0.75, 0.9), steel, -1.35, 0.95, 0);
-  make(new THREE.BoxGeometry(0.95, 0.75, 0.9), steel, 1.35, 0.95, 0);
-  const armL = make(new THREE.BoxGeometry(0.52, 1.7, 0.5), steel, -1.15, -0.28, 0);
-  const armR = make(new THREE.BoxGeometry(0.52, 1.7, 0.5), steel, 1.15, -0.28, 0);
-  make(new THREE.BoxGeometry(0.58, 2.05, 0.62), steel, -0.38, -2.2, 0);
-  make(new THREE.BoxGeometry(0.58, 2.05, 0.62), steel, 0.38, -2.2, 0);
+  // Pixel-art inspired "character card" silhouette resembling the references.
+  const torso = make(new THREE.BoxGeometry(1.25, 2.45, 0.75), coat, 0, 0.05, 0);
+  make(new THREE.BoxGeometry(0.95, 0.92, 0.62), new THREE.MeshToonMaterial({ color: 0xf6edf2 }), 0, 1.62, 0.08); // face
+  make(new THREE.BoxGeometry(1.22, 0.52, 0.66), armor, 0, 2.02, -0.02); // top hair
+  make(new THREE.BoxGeometry(1.56, 1.62, 0.48), armor, 0, 0.95, -0.22); // back hair mass
+  make(new THREE.BoxGeometry(0.42, 1.52, 0.42), armor, -0.98, 1.05, -0.08); // side hair left
+  make(new THREE.BoxGeometry(0.42, 1.52, 0.42), armor, 0.98, 1.05, -0.08); // side hair right
+  if (isMachineGun) {
+    make(new THREE.BoxGeometry(0.34, 1.9, 0.34), armor, -1.48, 0.72, -0.26); // twin-tail left
+    make(new THREE.BoxGeometry(0.34, 1.9, 0.34), armor, 1.48, 0.72, -0.26); // twin-tail right
+    make(new THREE.TorusGeometry(0.82, 0.07, 8, 20), steel, 0, 2.72, -0.02); // halo drone cue
+  } else {
+    make(new THREE.BoxGeometry(1.36, 0.42, 0.18), accent, 0.74, 2.62, -0.04); // purple shard cue
+  }
+  const armL = make(new THREE.BoxGeometry(0.42, 1.7, 0.52), steel, -0.9, -0.15, 0.08);
+  const armR = make(new THREE.BoxGeometry(0.42, 1.7, 0.52), steel, 0.9, -0.15, 0.08);
+  make(new THREE.BoxGeometry(1.18, 0.92, 0.62), steel, 0, -0.82, 0); // skirt/hips
+  make(new THREE.BoxGeometry(0.5, 2.12, 0.5), new THREE.MeshToonMaterial({ color: 0xf9e7ea }), -0.32, -2.15, 0.08);
+  make(new THREE.BoxGeometry(0.5, 2.12, 0.5), new THREE.MeshToonMaterial({ color: 0xf9e7ea }), 0.32, -2.15, 0.08);
+  make(new THREE.BoxGeometry(0.58, 0.6, 0.7), steel, -0.32, -3.18, 0.08);
+  make(new THREE.BoxGeometry(0.58, 0.6, 0.7), steel, 0.32, -3.18, 0.08);
+  // oversized weapon block to keep the silhouette close to the references.
+  make(new THREE.BoxGeometry(isMachineGun ? 0.42 : 0.3, 2.4, 0.38), steel, isMachineGun ? -1.72 : -1.34, 0.58, 0.16);
+  make(new THREE.BoxGeometry(isMachineGun ? 0.42 : 0.3, 1.5, 0.38), accent, isMachineGun ? 1.12 : -0.8, -1.72, 0.12);
 
-  const plumeLight = new THREE.PointLight(0x7efbff, 0, 7, 2);
+  const plumeLight = new THREE.PointLight(palette.glow, 0, 7, 2);
   plumeLight.position.set(0, -2.2, -0.7);
   root.add(plumeLight);
 
