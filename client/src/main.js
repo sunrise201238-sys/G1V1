@@ -12,18 +12,16 @@ const UNIT_DATA = {
     fireCooldownMs: 140,
     spreadCount: 1,
     spreadAngle: 0.02,
-    damage: 4,
-    homingTurn: 0.14
+    damage: 4
   },
   unit2: {
     name: 'Unit 2 / Shotgun',
-    lockRange: 16,
-    projectileSpeed: 38,
-    fireCooldownMs: 520,
-    spreadCount: 5,
-    spreadAngle: Math.PI / 12,
-    damage: 5,
-    homingTurn: 0.08
+    lockRange: 28,
+    projectileSpeed: 45,
+    fireCooldownMs: 1000,
+    spreadCount: 8,
+    spreadAngle: THREE.MathUtils.degToRad(16),
+    damage: 2
   }
 };
 
@@ -61,7 +59,7 @@ const key = new THREE.DirectionalLight(0xe5eeff, 1.15);
 key.position.set(18, 34, 12);
 scene.add(key);
 
-const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -21.6, 0) });
+const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -53.46, 0) });
 world.broadphase = new CANNON.SAPBroadphase(world);
 world.allowSleep = true;
 const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Box(new CANNON.Vec3(140, 0.25, 140)) });
@@ -118,7 +116,10 @@ createArenaWalls();
 
 const MOMENTUM_STANDARD = 100;
 const BOOST_MOVE_SPEED = 11.76;
-const HOMING_MAX_DEG_PER_FRAME = 15;
+const HOMING_MAX_DEG_PER_FRAME = 10;
+const HOMING_CLOSE_RANGE_CUTOFF = 2.6;
+const HOMING_SOFTEN_RANGE = 20;
+const HOMING_SOFTEN_DEG_PER_FRAME = 1;
 const BOOST_CAP = 125;
 const STEP_DISTANCE = 9.2;
 const STEP_DURATION_MS = 125;
@@ -131,7 +132,7 @@ const input = {
   y: 0,
   boost: false,
   boostHeld: false,
-  rise: false,
+  jump: false,
   stepTap: false,
   shootTap: false,
   shootHold: false,
@@ -149,14 +150,14 @@ function createMech(color, unitData) {
     return mesh;
   };
 
-  const torso = make(new THREE.BoxGeometry(2.4, 2.35, 1.8), armor, 0, 0, 0);
-  make(new THREE.BoxGeometry(1.1, 0.68, 1.05), steel, 0, 1.62, 0);
-  make(new THREE.BoxGeometry(1.25, 1.0, 1.7), steel, -1.65, 0.95, 0);
-  make(new THREE.BoxGeometry(1.25, 1.0, 1.7), steel, 1.65, 0.95, 0);
-  const armL = make(new THREE.BoxGeometry(0.68, 1.3, 0.62), steel, -1.55, -0.25, 0);
-  const armR = make(new THREE.BoxGeometry(0.68, 1.3, 0.62), steel, 1.55, -0.25, 0);
-  make(new THREE.BoxGeometry(0.9, 1.55, 1.0), steel, -0.52, -1.95, 0);
-  make(new THREE.BoxGeometry(0.9, 1.55, 1.0), steel, 0.52, -1.95, 0);
+  const torso = make(new THREE.BoxGeometry(1.85, 2.55, 1.05), armor, 0, 0, 0);
+  make(new THREE.BoxGeometry(0.95, 0.82, 0.9), steel, 0, 1.85, 0);
+  make(new THREE.BoxGeometry(0.95, 0.75, 0.9), steel, -1.35, 0.95, 0);
+  make(new THREE.BoxGeometry(0.95, 0.75, 0.9), steel, 1.35, 0.95, 0);
+  const armL = make(new THREE.BoxGeometry(0.52, 1.7, 0.5), steel, -1.15, -0.28, 0);
+  const armR = make(new THREE.BoxGeometry(0.52, 1.7, 0.5), steel, 1.15, -0.28, 0);
+  make(new THREE.BoxGeometry(0.58, 2.05, 0.62), steel, -0.38, -2.2, 0);
+  make(new THREE.BoxGeometry(0.58, 2.05, 0.62), steel, 0.38, -2.2, 0);
 
   const thrusterMat = new THREE.MeshBasicMaterial({ color: 0x7efbff, transparent: true, opacity: 0.12 });
   const thrusterL = make(new THREE.ConeGeometry(0.24, 0.9, 8), thrusterMat, -0.42, -2.4, -0.45);
@@ -172,6 +173,9 @@ function createMech(color, unitData) {
 
   const body = new CANNON.Body({ mass: 3, shape: new CANNON.Box(new CANNON.Vec3(0.95, 1.8, 0.8)), linearDamping: 0.24 });
   body.position.set(0, 2.45, 0);
+  body.type = CANNON.Body.KINEMATIC;
+  body.updateMassProperties();
+  body.linearFactor.set(1, 0, 1);
   world.addBody(body);
 
   return {
@@ -225,6 +229,9 @@ function createMech(color, unitData) {
       strafeSign: 1,
       vulnerabilityMove: false,
       stackUntil: 0,
+      jumpCooldownUntil: 0,
+      airborne: false,
+      jumpVelocity: 0,
       lastFireAt: 0
     }
   };
@@ -260,7 +267,7 @@ function setupHUD() {
   `;
   app.appendChild(hud);
 
-  ['boost', 'shoot', 'melee', 'step', 'rise'].forEach((action) => {
+  ['boost', 'shoot', 'melee', 'step', 'jump'].forEach((action) => {
     const b = document.createElement('button');
     b.dataset.k = action;
     b.className = `btn-${action}`;
@@ -348,10 +355,24 @@ function spawnProjectiles(owner, target) {
   owner.state.lastFireAt = now;
 
   const baseDir = new THREE.Vector3().subVectors(target.root.position, owner.root.position).normalize();
+  const isShotgun = owner.unit.spreadCount > 1;
+  const centerIndex = isShotgun ? Math.floor(Math.random() * owner.unit.spreadCount) : 0;
+  const shotgunOffsets = [];
+  if (isShotgun) {
+    const clusterRadius = 3.8;
+    for (let i = 0; i < owner.unit.spreadCount; i += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      const radius = Math.sqrt(Math.random()) * clusterRadius;
+      shotgunOffsets.push(new THREE.Vector3(Math.cos(angle) * radius, (Math.random() - 0.5) * radius * 0.7, Math.sin(angle) * radius));
+    }
+  }
+  let centerPellet = null;
 
   for (let i = 0; i < owner.unit.spreadCount; i += 1) {
-    const yaw = (Math.random() - 0.5) * owner.unit.spreadAngle;
-    const pitch = (Math.random() - 0.5) * owner.unit.spreadAngle * 0.35;
+    const isCenterPellet = isShotgun && i === centerIndex;
+    const spreadScale = isShotgun ? (isCenterPellet ? 0.08 : 0.14) : 1;
+    const yaw = (Math.random() - 0.5) * owner.unit.spreadAngle * spreadScale;
+    const pitch = (Math.random() - 0.5) * owner.unit.spreadAngle * 0.35 * spreadScale;
     const dir = baseDir.clone()
       .applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw)
       .applyAxisAngle(new THREE.Vector3(1, 0, 0), pitch);
@@ -360,18 +381,29 @@ function spawnProjectiles(owner, target) {
     mesh.position.copy(owner.root.position).add(new THREE.Vector3(0, 0.8, 0));
     scene.add(mesh);
 
-    state.projectiles.push({
+    const homing = owner.state.redLock && (!isShotgun || isCenterPellet);
+    const projectile = {
       owner,
       target,
       mesh,
       vel: dir.multiplyScalar(owner.unit.projectileSpeed),
-      homing: owner.state.redLock,
-      homingTurn: owner.state.redLock ? owner.unit.homingTurn : 0,
+      homing,
       homingLost: false,
+      isCenterPellet,
+      centerPellet: null,
+      clusterOffset: isShotgun ? shotgunOffsets[i] : null,
       ttl: 2.2,
       damage: owner.unit.damage,
       hitStunMs: 200
-    });
+    };
+    if (isCenterPellet) centerPellet = projectile;
+    state.projectiles.push(projectile);
+  }
+  if (isShotgun && centerPellet) {
+    for (let i = state.projectiles.length - owner.unit.spreadCount; i < state.projectiles.length; i += 1) {
+      const pellet = state.projectiles[i];
+      if (!pellet.isCenterPellet) pellet.centerPellet = centerPellet;
+    }
   }
 }
 
@@ -386,7 +418,19 @@ function updateProjectileSystem(dt) {
       continue;
     }
 
+    if (p.centerPellet && p.centerPellet !== p) {
+      if (p.centerPellet.ttl <= 0 || !state.projectiles.includes(p.centerPellet)) {
+        p.centerPellet = null;
+      } else {
+        p.vel.copy(p.centerPellet.vel);
+        p.mesh.position.copy(p.centerPellet.mesh.position).add(p.clusterOffset);
+      }
+    }
     const toTarget = new THREE.Vector3().subVectors(p.target.root.position, p.mesh.position);
+    if (toTarget.length() <= HOMING_CLOSE_RANGE_CUTOFF) {
+      p.homing = false;
+      p.homingLost = true;
+    }
     if (!p.homingLost && p.vel.dot(toTarget) < 0) {
       p.homingLost = true;
       p.homing = false;
@@ -395,7 +439,9 @@ function updateProjectileSystem(dt) {
     if (p.homing && !p.homingLost && now >= p.target.state.evadeHomingUntil) {
       const desiredAngle = Math.atan2(toTarget.z, toTarget.x);
       const currentAngle = Math.atan2(p.vel.z, p.vel.x);
-      const maxTurn = THREE.MathUtils.degToRad(HOMING_MAX_DEG_PER_FRAME);
+      const distToTarget = toTarget.length();
+      const turnDeg = distToTarget <= HOMING_SOFTEN_RANGE ? HOMING_SOFTEN_DEG_PER_FRAME : HOMING_MAX_DEG_PER_FRAME;
+      const maxTurn = THREE.MathUtils.degToRad(turnDeg);
       const wrapped = wrapAngle(desiredAngle - currentAngle);
       const turn = THREE.MathUtils.clamp(wrapped, -maxTurn, maxTurn);
       const speed = p.vel.length();
@@ -404,9 +450,13 @@ function updateProjectileSystem(dt) {
       p.vel.z = Math.sin(next) * speed;
     }
 
+    const prevPos = p.mesh.position.clone();
     p.mesh.position.addScaledVector(p.vel, dt);
-    const hitRadius = p.target.state.vulnerabilityMove ? 2 : 1.15;
-    if (p.mesh.position.distanceTo(p.target.root.position) < hitRadius) {
+    const hitRadius = p.target.state.vulnerabilityMove ? 2.25 : 1.6;
+    const path = new THREE.Line3(prevPos, p.mesh.position.clone());
+    const nearest = new THREE.Vector3();
+    path.closestPointToPoint(p.target.root.position, true, nearest);
+    if (nearest.distanceTo(p.target.root.position) < hitRadius) {
       const mitigation = p.target.state.vulnerabilityMove ? 1.35 : 1;
       p.target.state.hp = Math.max(0, p.target.state.hp - p.damage * mitigation);
       p.target.state.hitStunUntil = performance.now() + p.hitStunMs;
@@ -456,7 +506,7 @@ function updateBoost(mech, now, action) {
   }
 
   s.action = action;
-  const consume = ['dash', 'rise'].includes(action);
+  const consume = ['dash', 'jump'].includes(action);
   if (consume) {
     s.boost = Math.max(0, s.boost - 1.1);
     s.refillPausedUntil = now + 500;
@@ -524,12 +574,14 @@ function updatePlayer(now) {
       stepState.queuedMomentumVX = 0;
       stepState.queuedMomentumVZ = 0;
     }
-  } else if (input.rise && canInputMove) {
+  } else if (input.jump && canInputMove && (state.player.grounded || state.player.body.position.y <= 2.6) && now >= state.player.state.jumpCooldownUntil) {
     input.boost = false;
-    state.player.body.velocity.y = 12.38;
+    state.player.state.jumpVelocity = 20;
+    state.player.state.airborne = true;
     state.player.state.hoverUntil = now + 300;
+    state.player.state.jumpCooldownUntil = now + 1500;
     inheritMomentum(state.player, 70);
-    action = 'rise';
+    action = 'jump';
   } else if (input.boost && canInputMove) {
     state.player.state.antiMeleeUntil = now + 260;
     inheritMomentum(state.player, MOMENTUM_STANDARD * 1.5);
@@ -630,8 +682,12 @@ function updatePlayer(now) {
     state.player.state.meleeLungeVX = 0;
     state.player.state.meleeLungeVZ = 0;
   }
-  if (state.player.grounded && now > state.player.state.hoverUntil && action !== 'rise') {
+  if (state.player.grounded) {
+    state.player.body.position.y = 2.45;
     state.player.body.velocity.y = 0;
+    state.player.body.linearFactor.set(1, 0, 1);
+    state.player.state.airborne = false;
+    state.player.state.jumpVelocity = 0;
   }
 
   applyMomentum(state.player, { suspend: action === 'step' });
@@ -686,7 +742,7 @@ function updateEnemy(now) {
     state.enemy.body.velocity.z += dir.z * 16;
     state.enemy.state.action = 'melee-lunge';
   }
-  if (state.enemy.grounded && now > state.enemy.state.hoverUntil && state.enemy.state.action !== 'rise') {
+  if (state.enemy.grounded && now > state.enemy.state.hoverUntil && state.enemy.state.action !== 'jump') {
     state.enemy.body.velocity.y = 0;
   }
   applyMomentum(state.enemy);
@@ -698,26 +754,35 @@ function updateLocksAndReticle() {
   state.player.state.redLock = dist <= state.player.unit.lockRange;
   state.enemy.state.redLock = dist <= state.enemy.unit.lockRange;
 
-  state.reticle.position.set(0, 0, 0.95);
+  state.reticle.position.set(0, 0.2, 0);
   state.reticle.material.color.set(state.player.state.redLock ? 0xff5f72 : 0x7effbd);
   if (state.player.state.redLock !== state.reticleWasRed) {
     state.reticlePulseUntil = performance.now() + 180;
     state.reticleWasRed = state.player.state.redLock;
   }
-  const distScale = THREE.MathUtils.clamp(7 / camera.position.distanceTo(state.enemy.root.position), 0.75, 1.6);
+  const distScale = THREE.MathUtils.clamp(7.3 / camera.position.distanceTo(state.enemy.root.position), 0.9, 1.35);
   const pulse = state.reticlePulseUntil > performance.now() ? 1.2 : 1;
-  state.reticle.scale.setScalar(5.4 * distScale * pulse);
+  state.reticle.scale.setScalar(6.1 * distScale * pulse);
   state.reticle.quaternion.copy(camera.quaternion);
 }
 
-function updateTransforms() {
+function updateTransforms(dt) {
   [state.player, state.enemy].forEach((m) => {
-    if (m.grounded && performance.now() > m.state.hoverUntil) {
+    if (m.state.airborne) {
+      m.state.jumpVelocity += world.gravity.y * dt;
+      m.body.position.y += m.state.jumpVelocity * dt;
+      if (m.body.position.y <= 2.45) {
+        m.body.position.y = 2.45;
+        m.state.airborne = false;
+        m.state.jumpVelocity = 0;
+      }
+    }
+    if (m.grounded) {
       m.body.position.y = 2.45;
       m.body.velocity.y = 0;
-    } else if (m.body.position.y < 2.5 && m.state.action !== 'rise') {
-      m.body.position.y = 2.45;
-      m.body.velocity.y = 0;
+      m.body.linearFactor.set(1, 0, 1);
+      m.state.airborne = false;
+      m.state.jumpVelocity = 0;
     }
     m.root.position.set(m.body.position.x, m.body.position.y + m.modelYOffset, m.body.position.z);
     const from = new CANNON.Vec3(m.body.position.x, m.body.position.y + 1.1, m.body.position.z);
@@ -747,7 +812,7 @@ function updateTransforms() {
     if (performance.now() < m.state.staggerUntil) m.root.rotation.x = 0.18;
     if (m.state.action === 'melee-lunge' && performance.now() > m.state.meleeLungeUntil) m.state.action = 'idle';
     if (m.state.action === 'stagger' && performance.now() > m.state.staggerUntil) m.state.action = 'idle';
-    if (!['dash', 'rise'].includes(m.state.action)) return;
+    if (!['dash'].includes(m.state.action)) return;
     const puff = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 6), new THREE.MeshBasicMaterial({ color: 0x7efbff, transparent: true, opacity: 0.4 }));
     puff.position.copy(m.root.position).add(new THREE.Vector3(0, -1.8, -0.6));
     scene.add(puff);
@@ -814,8 +879,14 @@ function startMatch() {
   state.enemy = createMech(0xff7ad5, UNIT_DATA[state.enemyUnitKey]);
   state.player.body.position.set(-8, 2.45, 0);
   state.enemy.body.position.set(8, 2.45, 0);
+  const now = performance.now();
+  state.player.state.lastFireAt = now;
+  state.enemy.state.lastFireAt = now;
+  state.enemy.state.nextFireAt = now + 650;
+  input.shootHold = false;
+  input.shootTap = false;
   state.reticle = makeReticleSprite();
-  state.enemy.torso.add(state.reticle);
+  state.enemy.root.add(state.reticle);
   hudRefs = setupHUD();
   state.phase = 'match';
   state.running = true;
@@ -958,7 +1029,9 @@ function spawnMeleeSlash(mech, color, scaleBoost = 1) {
   );
   slash.position.copy(mech.root.position).add(new THREE.Vector3(0, 1.1, 1.4));
   slash.rotation.x = Math.PI / 2.7;
-  slash.rotation.y = mech.root.rotation.y;
+  const target = mech === state.player ? state.enemy : state.player;
+  const toTarget = new THREE.Vector3().subVectors(target.root.position, mech.root.position).normalize();
+  slash.rotation.y = Math.atan2(toTarget.x, toTarget.z);
   scene.add(slash);
   state.vfx.push({ mesh: slash, life: 0.22, growth: 1.12 });
 }
@@ -1034,7 +1107,7 @@ function animate() {
       applyRepulsion(now);
       world.step(1 / 60, dt, 3);
 
-      updateTransforms();
+      updateTransforms(dt);
       updateLocksAndReticle();
       updateProjectileSystem(dt);
       updateVfx(dt);

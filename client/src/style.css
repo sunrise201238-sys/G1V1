@@ -35,7 +35,7 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none !importan
   font-weight: 700;
 }
 .buttons .btn-boost { right: 0; bottom: 0; }
-.buttons .btn-rise { right: 0; bottom: calc(var(--btn-size) + var(--btn-gap)); }
+.buttons .btn-jump { right: 0; bottom: calc(var(--btn-size) + var(--btn-gap)); }
 .buttons .btn-step { right: 0; bottom: calc((var(--btn-size) + var(--btn-gap)) * 2); }
 .buttons .btn-shoot { right: calc(var(--btn-size) + var(--btn-gap)); bottom: 0; }
 .buttons .btn-melee { right: calc(var(--btn-size) + var(--btn-gap)); bottom: calc(var(--btn-size) + var(--btn-gap)); }
