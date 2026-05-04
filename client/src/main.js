@@ -17,13 +17,13 @@ const UNIT_DATA = {
   },
   unit2: {
     name: 'Unit 2 / Shotgun',
-    lockRange: 16,
-    projectileSpeed: 38,
-    fireCooldownMs: 520,
-    spreadCount: 5,
-    spreadAngle: Math.PI / 12,
-    damage: 5,
-    homingTurn: 0.08
+    lockRange: 28,
+    projectileSpeed: 45,
+    fireCooldownMs: 140,
+    spreadCount: 8,
+    spreadAngle: Math.PI / 3,
+    damage: 4,
+    homingTurn: 0
   }
 };
 
