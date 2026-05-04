@@ -7,7 +7,7 @@ const app = document.getElementById('app');
 const UNIT_DATA = {
   unit1: {
     name: 'Unit 1 / Machine Gun',
-    lockRange: 28,
+    lockRange: 56,
     projectileSpeed: 45,
     fireCooldownMs: 140,
     spreadCount: 1,
@@ -16,12 +16,12 @@ const UNIT_DATA = {
   },
   unit2: {
     name: 'Unit 2 / Shotgun',
-    lockRange: 28,
+    lockRange: 56,
     projectileSpeed: 45,
     fireCooldownMs: 1000,
     spreadCount: 8,
     spreadAngle: THREE.MathUtils.degToRad(16),
-    damage: 2
+    damage: 3
   }
 };
 
@@ -124,6 +124,7 @@ createArenaWalls();
 
 const MOMENTUM_STANDARD = 100;
 const BOOST_MOVE_SPEED = 11.76;
+const MAX_HP = 150;
 const HOMING_MAX_DEG_PER_FRAME = 10;
 const HOMING_CLOSE_RANGE_CUTOFF = 2.6;
 const HOMING_SOFTEN_RANGE = 20;
@@ -207,7 +208,7 @@ function createMech(color, unitData) {
     state: {
       action: 'idle',
       boost: BOOST_CAP,
-      hp: 100,
+      hp: MAX_HP,
       redLock: false,
       overheatedUntil: 0,
       hitStunUntil: 0,
@@ -840,8 +841,8 @@ function updateCamera() {
 }
 
 function updateHud() {
-  hudRefs.hp.style.width = `${state.player.state.hp}%`;
-  hudRefs.enemyHp.style.width = `${state.enemy.state.hp}%`;
+  hudRefs.hp.style.width = `${(state.player.state.hp / MAX_HP) * 100}%`;
+  hudRefs.enemyHp.style.width = `${(state.enemy.state.hp / MAX_HP) * 100}%`;
   hudRefs.boost.style.width = `${(state.player.state.boost / BOOST_CAP) * 100}%`;
   hudRefs.boost.style.background = state.player.state.overheatedUntil > performance.now() ? '#ff8c45' : '#90ff63';
   if (state.speedLines) state.speedLines.style.opacity = '0';
@@ -867,8 +868,8 @@ function startMatch() {
   renderer.domElement.style.pointerEvents = 'auto';
   state.player = createMech(0x62d7ff, UNIT_DATA[state.playerUnitKey]);
   state.enemy = createMech(0xff7ad5, UNIT_DATA[state.enemyUnitKey]);
-  state.player.body.position.set(-8, 2.45, 0);
-  state.enemy.body.position.set(8, 2.45, 0);
+  state.player.body.position.set(-16, 2.45, 0);
+  state.enemy.body.position.set(16, 2.45, 0);
   buildArenaForMap(state.mapKey);
   const now = performance.now();
   state.player.state.lastFireAt = now;
