@@ -27,7 +27,7 @@ const UNIT_DATA = {
 
 const MAP_DATA = {
   arena1: { name: 'Map 1 / Arena' },
-  arena2: { name: 'Map 2 / Placeholder' }
+  arena2: { name: 'Map 2 / Urban Plaza' }
 };
 
 const state = {
@@ -118,6 +118,7 @@ ground.rotation.x = -Math.PI / 2;
 scene.add(ground);
 const gridHelper = new THREE.GridHelper(200, 50, 0xff0000, 0x444444);
 scene.add(gridHelper);
+const arenaDecor = [];
 createArenaWalls();
 
 const MOMENTUM_STANDARD = 100;
@@ -144,6 +145,13 @@ const input = {
   shootTap: false,
   shootHold: false,
   meleeTap: false
+};
+
+const keyState = {
+  up: false,
+  down: false,
+  left: false,
+  right: false
 };
 
 function createMech(color, unitData) {
@@ -816,17 +824,10 @@ function updateTransforms(dt) {
   state.enemy.root.rotation.y = Math.atan2(-pToE.x, -pToE.z);
 
   [state.player, state.enemy].forEach((m) => {
-    if (performance.now() < m.state.meleeAnimUntil) {
-      m.arms.left.rotation.x = -1.65;
-      m.arms.right.rotation.x = -1.65;
-      m.arms.left.rotation.z = -0.25;
-      m.arms.right.rotation.z = 0.25;
-    } else {
-      m.arms.left.rotation.x = 0;
-      m.arms.right.rotation.x = 0;
-      m.arms.left.rotation.z = 0;
-      m.arms.right.rotation.z = 0;
-    }
+    m.arms.left.rotation.x = 0;
+    m.arms.right.rotation.x = 0;
+    m.arms.left.rotation.z = 0;
+    m.arms.right.rotation.z = 0;
     m.root.rotation.x = m.state.action === 'melee-lunge' ? -0.22 : 0;
     if (performance.now() < m.state.staggerUntil) m.root.rotation.x = 0.18;
     if (m.state.action === 'melee-lunge' && performance.now() > m.state.meleeLungeUntil) m.state.action = 'idle';
@@ -898,6 +899,7 @@ function startMatch() {
   state.enemy = createMech(0xff7ad5, UNIT_DATA[state.enemyUnitKey]);
   state.player.body.position.set(-8, 2.45, 0);
   state.enemy.body.position.set(8, 2.45, 0);
+  buildArenaForMap(state.mapKey);
   const now = performance.now();
   state.player.state.lastFireAt = now;
   state.enemy.state.lastFireAt = now;
@@ -986,6 +988,40 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
+
+window.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  const k = e.key.toLowerCase();
+  if (k === 'w' || e.key === 'ArrowUp') keyState.up = true;
+  else if (k === 's' || e.key === 'ArrowDown') keyState.down = true;
+  else if (k === 'a' || e.key === 'ArrowLeft') keyState.left = true;
+  else if (k === 'd' || e.key === 'ArrowRight') keyState.right = true;
+  else if (k === ' ') input.jump = true;
+  else if (k === 'shift') { input.boostHeld = true; input.boost = true; }
+  else if (k === 'q') input.stepTap = true;
+  else if (k === 'f') input.meleeTap = true;
+  else if (k === 'j') { input.shootTap = true; input.shootHold = true; }
+});
+
+window.addEventListener('keyup', (e) => {
+  const k = e.key.toLowerCase();
+  if (k === 'w' || e.key === 'ArrowUp') keyState.up = false;
+  else if (k === 's' || e.key === 'ArrowDown') keyState.down = false;
+  else if (k === 'a' || e.key === 'ArrowLeft') keyState.left = false;
+  else if (k === 'd' || e.key === 'ArrowRight') keyState.right = false;
+  else if (k === ' ') input.jump = false;
+  else if (k === 'shift') { input.boostHeld = false; input.boost = false; }
+  else if (k === 'j') input.shootHold = false;
+});
+
+function syncKeyboardMovement() {
+  const x = (keyState.right ? 1 : 0) - (keyState.left ? 1 : 0);
+  const y = (keyState.down ? 1 : 0) - (keyState.up ? 1 : 0);
+  if (x === 0 && y === 0) return;
+  const len = Math.hypot(x, y) || 1;
+  input.x = x / len;
+  input.y = y / len;
+}
 
 setupRootTouchAction();
 showSelectMenu();
@@ -1127,6 +1163,76 @@ function applyMomentum(mech, { suspend = false } = {}) {
   if (Math.abs(mech.state.momentumVZ) < 0.02) mech.state.momentumVZ = 0;
 }
 
+
+function clearArenaDecor() {
+  while (arenaDecor.length) {
+    const obj = arenaDecor.pop();
+    scene.remove(obj);
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) {
+      if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
+      else obj.material.dispose();
+    }
+  }
+}
+
+function buildArenaForMap(mapKey) {
+  clearArenaDecor();
+  if (mapKey !== 'arena2') return;
+
+  const tileMat = new THREE.MeshStandardMaterial({ color: 0xbec3cc, roughness: 0.85, metalness: 0.05 });
+  const accentMat = new THREE.MeshStandardMaterial({ color: 0x8a2f35, roughness: 0.75, metalness: 0.08 });
+  const grassMat = new THREE.MeshStandardMaterial({ color: 0x3f6e56, roughness: 0.92, metalness: 0 });
+
+  const plaza = new THREE.Mesh(new THREE.PlaneGeometry(190, 190), tileMat);
+  plaza.rotation.x = -Math.PI / 2;
+  plaza.position.y = 0.02;
+  scene.add(plaza);
+  arenaDecor.push(plaza);
+
+  const central = new THREE.Mesh(new THREE.BoxGeometry(38, 2.5, 38), accentMat);
+  central.position.set(0, 1.25, 0);
+  scene.add(central);
+  arenaDecor.push(central);
+
+  const gateGeo = new THREE.BoxGeometry(28, 1.8, 4);
+  const pillarGeo = new THREE.BoxGeometry(2.2, 10, 2.2);
+  [[0, 64, 1], [0, -64, -1]].forEach(([x, z, dir]) => {
+    const roof = new THREE.Mesh(gateGeo, accentMat);
+    roof.position.set(x, 8.8, z);
+    scene.add(roof);
+    arenaDecor.push(roof);
+
+    [-11, 11].forEach((offset) => {
+      const p = new THREE.Mesh(pillarGeo, tileMat);
+      p.position.set(offset, 5, z + dir * 0.2);
+      scene.add(p);
+      arenaDecor.push(p);
+    });
+  });
+
+  for (let i = -2; i <= 2; i += 1) {
+    const stall = new THREE.Mesh(new THREE.BoxGeometry(10, 3.2, 6), accentMat);
+    stall.position.set(-68, 1.6, i * 24);
+    scene.add(stall);
+    arenaDecor.push(stall);
+
+    const stall2 = stall.clone();
+    stall2.position.x = 68;
+    scene.add(stall2);
+    arenaDecor.push(stall2);
+  }
+
+  const treeGeo = new THREE.ConeGeometry(3.6, 6.5, 7);
+  for (let i = 0; i < 14; i += 1) {
+    const t = new THREE.Mesh(treeGeo, grassMat);
+    const side = i % 2 === 0 ? -1 : 1;
+    t.position.set(side * 88, 3.3, -82 + i * 12.8);
+    scene.add(t);
+    arenaDecor.push(t);
+  }
+}
+
 function createArenaWalls() {
   const WALL_HEIGHT = 16;
   const HALF = 138;
@@ -1177,6 +1283,7 @@ function animate() {
     const now = performance.now();
 
     if (state.running) {
+      syncKeyboardMovement();
       updatePlayer(now);
       updateEnemy(now);
       applyRepulsion(now);
