@@ -161,8 +161,26 @@ const keyState = {
 
 function createMech(color, unitData) {
   const root = new THREE.Group();
-  const armor = new THREE.MeshToonMaterial({ color });
-  const steel = new THREE.MeshToonMaterial({ color: 0x3b4658 });
+  const isMachineGun = unitData.spreadCount === 1;
+  const palette = isMachineGun
+    ? {
+      armor: 0x4f8cff,
+      coat: 0xc4d9ff,
+      dark: 0x1f2e52,
+      accent: 0x7ed8ff,
+      glow: 0x7efbff
+    }
+    : {
+      armor: 0x9b6cff,
+      coat: 0xd8c3ff,
+      dark: 0x32214d,
+      accent: 0xff88f8,
+      glow: 0xff84f6
+    };
+  const armor = new THREE.MeshToonMaterial({ color: palette.armor });
+  const coat = new THREE.MeshToonMaterial({ color: palette.coat });
+  const steel = new THREE.MeshToonMaterial({ color: palette.dark });
+  const accent = new THREE.MeshToonMaterial({ color: palette.accent });
   const make = (g, m, x, y, z) => {
     const mesh = new THREE.Mesh(g, m);
     mesh.position.set(x, y, z);
@@ -170,16 +188,25 @@ function createMech(color, unitData) {
     return mesh;
   };
 
-  const torso = make(new THREE.BoxGeometry(1.85, 2.55, 1.05), armor, 0, 0, 0);
-  make(new THREE.BoxGeometry(0.95, 0.82, 0.9), steel, 0, 1.85, 0);
-  make(new THREE.BoxGeometry(0.95, 0.75, 0.9), steel, -1.35, 0.95, 0);
-  make(new THREE.BoxGeometry(0.95, 0.75, 0.9), steel, 1.35, 0.95, 0);
-  const armL = make(new THREE.BoxGeometry(0.52, 1.7, 0.5), steel, -1.15, -0.28, 0);
-  const armR = make(new THREE.BoxGeometry(0.52, 1.7, 0.5), steel, 1.15, -0.28, 0);
-  make(new THREE.BoxGeometry(0.58, 2.05, 0.62), steel, -0.38, -2.2, 0);
-  make(new THREE.BoxGeometry(0.58, 2.05, 0.62), steel, 0.38, -2.2, 0);
+  // Pixel/voxel-like silhouette: stacked cubes with chunky proportions.
+  const torso = make(new THREE.BoxGeometry(1.9, 2.2, 1), coat, 0, 0, 0);
+  make(new THREE.BoxGeometry(1.2, 0.85, 0.8), armor, 0, 1.55, 0.05); // head
+  make(new THREE.BoxGeometry(0.7, 0.22, 1.05), steel, 0, 1.05, 0.1); // collar shadow
+  make(new THREE.BoxGeometry(0.24, 0.24, 1.06), accent, -0.36, 0.5, 0.1); // tie stripe
+  make(new THREE.BoxGeometry(0.24, 0.24, 1.06), accent, 0.36, 0.5, 0.1);
+  make(new THREE.BoxGeometry(0.95, 0.7, 0.95), armor, -1.3, 0.85, 0);
+  make(new THREE.BoxGeometry(0.95, 0.7, 0.95), armor, 1.3, 0.85, 0);
+  const armL = make(new THREE.BoxGeometry(0.52, 1.7, 0.56), steel, -1.15, -0.28, 0.1);
+  const armR = make(new THREE.BoxGeometry(0.52, 1.7, 0.56), steel, 1.15, -0.28, 0.1);
+  make(new THREE.BoxGeometry(0.42, 0.42, 1.02), accent, -1.15, 0.1, 0.12);
+  make(new THREE.BoxGeometry(0.42, 0.42, 1.02), accent, 1.15, 0.1, 0.12);
+  make(new THREE.BoxGeometry(0.62, 2.1, 0.72), steel, -0.4, -2.12, 0);
+  make(new THREE.BoxGeometry(0.62, 2.1, 0.72), steel, 0.4, -2.12, 0);
+  make(new THREE.BoxGeometry(0.62, 0.35, 0.9), armor, -0.4, -3.25, 0.1);
+  make(new THREE.BoxGeometry(0.62, 0.35, 0.9), armor, 0.4, -3.25, 0.1);
+  make(new THREE.BoxGeometry(2.15, 0.3, 1.15), steel, 0, -1.18, 0); // waist pack
 
-  const plumeLight = new THREE.PointLight(0x7efbff, 0, 7, 2);
+  const plumeLight = new THREE.PointLight(palette.glow, 0, 7, 2);
   plumeLight.position.set(0, -2.2, -0.7);
   root.add(plumeLight);
 
