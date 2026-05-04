@@ -12,18 +12,16 @@ const UNIT_DATA = {
     fireCooldownMs: 140,
     spreadCount: 1,
     spreadAngle: 0.02,
-    damage: 4,
-    homingTurn: 0.14
+    damage: 4
   },
   unit2: {
     name: 'Unit 2 / Shotgun',
-    lockRange: 16,
-    projectileSpeed: 38,
-    fireCooldownMs: 520,
-    spreadCount: 5,
-    spreadAngle: Math.PI / 12,
-    damage: 5,
-    homingTurn: 0.08
+    lockRange: 28,
+    projectileSpeed: 45,
+    fireCooldownMs: 140,
+    spreadCount: 8,
+    spreadAngle: THREE.MathUtils.degToRad(8),
+    damage: 4
   }
 };
 
@@ -348,10 +346,24 @@ function spawnProjectiles(owner, target) {
   owner.state.lastFireAt = now;
 
   const baseDir = new THREE.Vector3().subVectors(target.root.position, owner.root.position).normalize();
+  const isShotgun = owner.unit.spreadCount > 1;
+  const centerIndex = isShotgun ? Math.floor(Math.random() * owner.unit.spreadCount) : 0;
+  const shotgunOffsets = [];
+  if (isShotgun) {
+    const clusterRadius = 1.6;
+    for (let i = 0; i < owner.unit.spreadCount; i += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      const radius = Math.sqrt(Math.random()) * clusterRadius;
+      shotgunOffsets.push(new THREE.Vector3(Math.cos(angle) * radius, (Math.random() - 0.5) * 0.2, Math.sin(angle) * radius));
+    }
+  }
+  let centerPellet = null;
 
   for (let i = 0; i < owner.unit.spreadCount; i += 1) {
-    const yaw = (Math.random() - 0.5) * owner.unit.spreadAngle;
-    const pitch = (Math.random() - 0.5) * owner.unit.spreadAngle * 0.35;
+    const isCenterPellet = isShotgun && i === centerIndex;
+    const spreadScale = isShotgun ? (isCenterPellet ? 0.08 : 0.14) : 1;
+    const yaw = (Math.random() - 0.5) * owner.unit.spreadAngle * spreadScale;
+    const pitch = (Math.random() - 0.5) * owner.unit.spreadAngle * 0.35 * spreadScale;
     const dir = baseDir.clone()
       .applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw)
       .applyAxisAngle(new THREE.Vector3(1, 0, 0), pitch);
@@ -360,18 +372,29 @@ function spawnProjectiles(owner, target) {
     mesh.position.copy(owner.root.position).add(new THREE.Vector3(0, 0.8, 0));
     scene.add(mesh);
 
-    state.projectiles.push({
+    const homing = owner.state.redLock && (!isShotgun || isCenterPellet);
+    const projectile = {
       owner,
       target,
       mesh,
       vel: dir.multiplyScalar(owner.unit.projectileSpeed),
-      homing: owner.state.redLock,
-      homingTurn: owner.state.redLock ? owner.unit.homingTurn : 0,
+      homing,
       homingLost: false,
+      isCenterPellet,
+      centerPellet: null,
+      clusterOffset: isShotgun ? shotgunOffsets[i] : null,
       ttl: 2.2,
       damage: owner.unit.damage,
       hitStunMs: 200
-    });
+    };
+    if (isCenterPellet) centerPellet = projectile;
+    state.projectiles.push(projectile);
+  }
+  if (isShotgun && centerPellet) {
+    for (let i = state.projectiles.length - owner.unit.spreadCount; i < state.projectiles.length; i += 1) {
+      const pellet = state.projectiles[i];
+      if (!pellet.isCenterPellet) pellet.centerPellet = centerPellet;
+    }
   }
 }
 
@@ -386,6 +409,14 @@ function updateProjectileSystem(dt) {
       continue;
     }
 
+    if (p.centerPellet && p.centerPellet !== p) {
+      if (p.centerPellet.ttl <= 0 || !state.projectiles.includes(p.centerPellet)) {
+        p.centerPellet = null;
+      } else {
+        p.vel.copy(p.centerPellet.vel);
+        p.mesh.position.copy(p.centerPellet.mesh.position).add(p.clusterOffset);
+      }
+    }
     const toTarget = new THREE.Vector3().subVectors(p.target.root.position, p.mesh.position);
     if (!p.homingLost && p.vel.dot(toTarget) < 0) {
       p.homingLost = true;
@@ -727,10 +758,6 @@ function updateTransforms() {
       && raycastResult.body === groundBody
       && raycastResult.distance <= m.legLength;
   });
-  const pToE = new THREE.Vector3().subVectors(state.enemy.root.position, state.player.root.position).normalize();
-  state.player.root.rotation.y = Math.atan2(pToE.x, pToE.z);
-  state.enemy.root.rotation.y = Math.atan2(-pToE.x, -pToE.z);
-
   [state.player, state.enemy].forEach((m) => {
     if (performance.now() < m.state.meleeAnimUntil) {
       m.arms.left.rotation.x = -1.65;
@@ -958,7 +985,9 @@ function spawnMeleeSlash(mech, color, scaleBoost = 1) {
   );
   slash.position.copy(mech.root.position).add(new THREE.Vector3(0, 1.1, 1.4));
   slash.rotation.x = Math.PI / 2.7;
-  slash.rotation.y = mech.root.rotation.y;
+  const target = mech === state.player ? state.enemy : state.player;
+  const toTarget = new THREE.Vector3().subVectors(target.root.position, mech.root.position).normalize();
+  slash.rotation.y = Math.atan2(toTarget.x, toTarget.z);
   scene.add(slash);
   state.vfx.push({ mesh: slash, life: 0.22, growth: 1.12 });
 }
