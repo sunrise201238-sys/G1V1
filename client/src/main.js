@@ -27,7 +27,8 @@ const UNIT_DATA = {
 
 const MAP_DATA = {
   arena1: { name: 'Map 1 / Arena' },
-  arena2: { name: 'Map 2 / Urban Plaza' }
+  arena2: { name: 'Streets' },
+  arena3: { name: 'Dummy room' }
 };
 
 const state = {
@@ -434,6 +435,30 @@ function spawnProjectiles(owner, target) {
   }
 }
 
+
+function getProjectileDamage(projectile) {
+  if (state.mapKey === 'arena3' && projectile.owner === state.enemy) return 0;
+  return projectile.damage;
+}
+
+function projectileHitsSurface(prevPos, nextPos) {
+  const samples = 8;
+  let prevDelta = null;
+  for (let i = 0; i <= samples; i += 1) {
+    const t = i / samples;
+    const x = THREE.MathUtils.lerp(prevPos.x, nextPos.x, t);
+    const y = THREE.MathUtils.lerp(prevPos.y, nextPos.y, t);
+    const z = THREE.MathUtils.lerp(prevPos.z, nextPos.z, t);
+    const h = surfaceHeightAtXZ(x, z);
+    if (h === -Infinity) continue;
+    const delta = y - h;
+    if (Math.abs(delta) < 0.04) return true;
+    if (prevDelta !== null && ((prevDelta > 0 && delta < 0) || (prevDelta < 0 && delta > 0))) return true;
+    prevDelta = delta;
+  }
+  return false;
+}
+
 function updateProjectileSystem(dt) {
   const now = performance.now();
   for (let i = state.projectiles.length - 1; i >= 0; i -= 1) {
@@ -491,23 +516,12 @@ function updateProjectileSystem(dt) {
       break;
     }
     if (p.ttl <= 0) continue;
-    // Surface (bridge deck / ramp) collision: kill projectile if its Y crosses
-    // through the surface height between prevPos and current position
-    const prevSurface = surfaceHeightAtXZ(prevPos.x, prevPos.z);
-    const curSurface = surfaceHeightAtXZ(p.mesh.position.x, p.mesh.position.z);
-    if (prevSurface > -Infinity || curSurface > -Infinity) {
-      const refSurface = Math.max(prevSurface, curSurface);
-      if (refSurface > -Infinity) {
-        const crossedDown = prevPos.y >= refSurface && p.mesh.position.y <= refSurface;
-        const crossedUp = prevPos.y <= refSurface && p.mesh.position.y >= refSurface;
-        if (crossedDown || crossedUp) {
-          scene.remove(p.mesh);
-          p.mesh.geometry.dispose();
-          p.mesh.material.dispose();
-          state.projectiles.splice(i, 1);
-          p.ttl = 0;
-        }
-      }
+    if (projectileHitsSurface(prevPos, p.mesh.position)) {
+      scene.remove(p.mesh);
+      p.mesh.geometry.dispose();
+      p.mesh.material.dispose();
+      state.projectiles.splice(i, 1);
+      p.ttl = 0;
     }
     if (p.ttl <= 0) continue;
     const hitRadius = p.target.state.vulnerabilityMove ? 2.25 : 1.6;
@@ -516,7 +530,8 @@ function updateProjectileSystem(dt) {
     path.closestPointToPoint(p.target.root.position, true, nearest);
     if (nearest.distanceTo(p.target.root.position) < hitRadius) {
       const mitigation = p.target.state.vulnerabilityMove ? 1.35 : 1;
-      p.target.state.hp = Math.max(0, p.target.state.hp - p.damage * mitigation);
+      const finalDamage = getProjectileDamage(p) * mitigation;
+      p.target.state.hp = Math.max(0, p.target.state.hp - finalDamage);
       if (performance.now() >= p.target.state.hitStunUntil) p.target.state.hitStunUntil = performance.now() + p.hitStunMs;
       p.target.state.momentumVX = 0;
       p.target.state.momentumVZ = 0;
@@ -602,7 +617,8 @@ function updatePlayer(now) {
   const useSprint = input.boost && canDash;
   const baseSpeed = useSprint ? BOOST_MOVE_SPEED : (recoveringFromDash ? 4.55 : 16);
   const speed = (!hasBoost || emptyPenaltyActive) ? Math.min(baseSpeed, 7.5) : baseSpeed;
-  const hitStunScale = now < state.player.state.hitStunUntil ? 0.25 : 1;
+  const hitStunned = now < state.player.state.hitStunUntil;
+  const hitStunScale = hitStunned ? 0 : 1;
   const canInputMove = !emptyPenaltyActive;
   if (!inStep) {
     state.player.body.velocity.x = canInputMove ? move.x * speed * hitStunScale : 0;
@@ -718,7 +734,7 @@ function updateEnemy(now) {
   const retreat = dist < 11 ? -0.9 : dist > 19 ? 0.62 : 0.15;
   const move = dir.clone().multiplyScalar(retreat).add(side.multiplyScalar(state.enemy.state.strafeSign * 1.05));
 
-  const moveScalar = now < state.enemy.state.hitStunUntil ? 5.8 : 10.6;
+  const moveScalar = now < state.enemy.state.hitStunUntil ? 0 : 10.6;
   state.enemy.body.velocity.x = move.x * moveScalar;
   state.enemy.body.velocity.z = move.z * moveScalar;
   if (Math.abs(state.enemy.body.velocity.x) + Math.abs(state.enemy.body.velocity.z) < 0.08) {
@@ -1258,6 +1274,9 @@ function surfaceHeightAtXZ(x, z) {
 
 function buildArenaForMap(mapKey) {
   clearArenaDecor();
+  if (mapKey === 'arena3') {
+    return;
+  }
   if (mapKey !== 'arena2') return;
 
   const road = new THREE.MeshStandardMaterial({ color: 0x1f2530, roughness: 0.92 });
@@ -1289,10 +1308,10 @@ function buildArenaForMap(mapKey) {
   const BRIDGE_MAX_Z = 28;
   const RAMP_HALF_X = 4;
   const RAMP_LOW_Y = 0.45;
-  const RAMP_S_MIN_Z = -44;
+  const RAMP_S_MIN_Z = -56;
   const RAMP_S_MAX_Z = -28;
   const RAMP_N_MIN_Z = 28;
-  const RAMP_N_MAX_Z = 44;
+  const RAMP_N_MAX_Z = 56;
 
   // Sidewalks lining the main avenue (street runs along X, narrow in Z)
   addPlatform({ minX: -120, maxX: 120, minZ: -18, maxZ: -12, top: 0.45, material: sidewalk });
