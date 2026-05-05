@@ -1,0 +1,17 @@
+{
+  "name": "@gvg/server",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "build": "echo 'No build step needed for Node server'"
+  },
+  "dependencies": {
+    "@gvg/shared": "0.1.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}
