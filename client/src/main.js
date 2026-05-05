@@ -1208,6 +1208,13 @@ function inheritMomentum(mech, momentumValue = MOMENTUM_STANDARD) {
 
 function applyMomentum(mech, { suspend = false } = {}) {
   if (suspend) return;
+  const grounded = mech.grounded && !mech.state.airborne;
+  const stableAction = ['idle', 'shoot', 'melee'].includes(mech.state.action);
+  if (grounded && stableAction) {
+    mech.state.momentumVX = 0;
+    mech.state.momentumVZ = 0;
+    return;
+  }
   mech.body.velocity.x += mech.state.momentumVX;
   mech.body.velocity.z += mech.state.momentumVZ;
   mech.state.momentumVX *= mech.state.momentumDecay;
@@ -1287,11 +1294,15 @@ function addRamp({ minX, maxX, minZ, maxZ, axis, lowY, highY, material, thicknes
 
 function groundHeightAt(x, z, currentSurfaceY = 0) {
   let best = 0;
+  let hasCandidate = false;
   for (const s of arenaSurfaces) {
     if (x < s.minX || x > s.maxX || z < s.minZ || z > s.maxZ) continue;
     const h = s.heightAt(x, z);
     if (h > currentSurfaceY + SURFACE_STEP_HEIGHT) continue;
-    if (h > best) best = h;
+    if (!hasCandidate || h > best) {
+      best = h;
+      hasCandidate = true;
+    }
   }
   return best;
 }
