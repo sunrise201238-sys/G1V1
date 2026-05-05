@@ -14,7 +14,7 @@ const UNIT_DATA = {
     spreadAngle: 0.02,
     damage: 4,
     magCapacity: 30,
-    reloadMs: 2500,
+    reloadMs: 2000,
     autoReload: false
   },
   unit2: {
@@ -24,7 +24,7 @@ const UNIT_DATA = {
     fireCooldownMs: 700,
     spreadCount: 8,
     spreadAngle: THREE.MathUtils.degToRad(16),
-    damage: 5,
+    damage: 4,
     magCapacity: 7,
     reloadMs: 2000,
     autoReload: true
