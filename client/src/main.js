@@ -33,7 +33,7 @@ const UNIT_DATA = {
     name: 'Unit 3 / Sniper Rifle',
     lockRange: 120,
     projectileSpeed: 85,
-    fireCooldownMs: 150,
+    fireCooldownMs: 500,
     spreadCount: 1,
     spreadAngle: 0.02,
     damage: 40,
