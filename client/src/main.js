@@ -27,7 +27,7 @@ const UNIT_DATA = {
 
 const MAP_DATA = {
   arena1: { name: 'Map 1 / Arena' },
-  arena2: { name: 'Map 2 / Urban Plaza' }
+  arena2: { name: 'Streets' }
 };
 
 const state = {
@@ -47,6 +47,8 @@ const state = {
   running: false,
   matchStartAt: 0
 };
+state.dummyMode = false;
+state.playerStuckSince = 0;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -434,6 +436,30 @@ function spawnProjectiles(owner, target) {
   }
 }
 
+
+function getProjectileDamage(projectile) {
+  if (state.dummyMode && projectile.owner === state.enemy) return 0;
+  return projectile.damage;
+}
+
+function projectileHitsSurface(prevPos, nextPos) {
+  const samples = 8;
+  let prevDelta = null;
+  for (let i = 0; i <= samples; i += 1) {
+    const t = i / samples;
+    const x = THREE.MathUtils.lerp(prevPos.x, nextPos.x, t);
+    const y = THREE.MathUtils.lerp(prevPos.y, nextPos.y, t);
+    const z = THREE.MathUtils.lerp(prevPos.z, nextPos.z, t);
+    const h = surfaceHeightAtXZ(x, z);
+    if (h === -Infinity) continue;
+    const delta = y - h;
+    if (Math.abs(delta) < 0.04) return true;
+    if (prevDelta !== null && ((prevDelta > 0 && delta < 0) || (prevDelta < 0 && delta > 0))) return true;
+    prevDelta = delta;
+  }
+  return false;
+}
+
 function updateProjectileSystem(dt) {
   const now = performance.now();
   for (let i = state.projectiles.length - 1; i >= 0; i -= 1) {
@@ -491,23 +517,12 @@ function updateProjectileSystem(dt) {
       break;
     }
     if (p.ttl <= 0) continue;
-    // Surface (bridge deck / ramp) collision: kill projectile if its Y crosses
-    // through the surface height between prevPos and current position
-    const prevSurface = surfaceHeightAtXZ(prevPos.x, prevPos.z);
-    const curSurface = surfaceHeightAtXZ(p.mesh.position.x, p.mesh.position.z);
-    if (prevSurface > -Infinity || curSurface > -Infinity) {
-      const refSurface = Math.max(prevSurface, curSurface);
-      if (refSurface > -Infinity) {
-        const crossedDown = prevPos.y >= refSurface && p.mesh.position.y <= refSurface;
-        const crossedUp = prevPos.y <= refSurface && p.mesh.position.y >= refSurface;
-        if (crossedDown || crossedUp) {
-          scene.remove(p.mesh);
-          p.mesh.geometry.dispose();
-          p.mesh.material.dispose();
-          state.projectiles.splice(i, 1);
-          p.ttl = 0;
-        }
-      }
+    if (projectileHitsSurface(prevPos, p.mesh.position)) {
+      scene.remove(p.mesh);
+      p.mesh.geometry.dispose();
+      p.mesh.material.dispose();
+      state.projectiles.splice(i, 1);
+      p.ttl = 0;
     }
     if (p.ttl <= 0) continue;
     const hitRadius = p.target.state.vulnerabilityMove ? 2.25 : 1.6;
@@ -516,7 +531,8 @@ function updateProjectileSystem(dt) {
     path.closestPointToPoint(p.target.root.position, true, nearest);
     if (nearest.distanceTo(p.target.root.position) < hitRadius) {
       const mitigation = p.target.state.vulnerabilityMove ? 1.35 : 1;
-      p.target.state.hp = Math.max(0, p.target.state.hp - p.damage * mitigation);
+      const finalDamage = getProjectileDamage(p) * mitigation;
+      p.target.state.hp = Math.max(0, p.target.state.hp - finalDamage);
       if (performance.now() >= p.target.state.hitStunUntil) p.target.state.hitStunUntil = performance.now() + p.hitStunMs;
       p.target.state.momentumVX = 0;
       p.target.state.momentumVZ = 0;
@@ -594,6 +610,7 @@ function updatePlayer(now) {
   forward.normalize();
   const right = new THREE.Vector3(-forward.z, 0, forward.x);
   const move = forward.clone().multiplyScalar(-input.y).add(right.multiplyScalar(input.x));
+  const moveMag = Math.hypot(input.x, input.y);
 
   const recoveringFromDash = now < state.player.state.dashRecoverUntil;
   const hasBoost = state.player.state.boost > 0;
@@ -602,7 +619,8 @@ function updatePlayer(now) {
   const useSprint = input.boost && canDash;
   const baseSpeed = useSprint ? BOOST_MOVE_SPEED : (recoveringFromDash ? 4.55 : 16);
   const speed = (!hasBoost || emptyPenaltyActive) ? Math.min(baseSpeed, 7.5) : baseSpeed;
-  const hitStunScale = now < state.player.state.hitStunUntil ? 0.25 : 1;
+  const hitStunned = now < state.player.state.hitStunUntil;
+  const hitStunScale = hitStunned ? 0 : 1;
   const canInputMove = !emptyPenaltyActive;
   if (!inStep) {
     state.player.body.velocity.x = canInputMove ? move.x * speed * hitStunScale : 0;
@@ -702,6 +720,22 @@ function updatePlayer(now) {
   }
 
   applyMomentum(state.player, { suspend: action === 'step' });
+  const canAttemptMove = moveMag > 0.2 && !hitStunned && !inStep;
+  const horizontalSpeed = Math.hypot(state.player.body.velocity.x, state.player.body.velocity.z);
+  if (canAttemptMove && horizontalSpeed < 0.08) {
+    if (!state.playerStuckSince) state.playerStuckSince = now;
+    if (now - state.playerStuckSince > 420) {
+      state.player.body.position.x += move.x * 0.45;
+      state.player.body.position.z += move.z * 0.45;
+      state.player.body.velocity.x = move.x * 3.2;
+      state.player.body.velocity.z = move.z * 3.2;
+      state.player.state.momentumVX = 0;
+      state.player.state.momentumVZ = 0;
+      state.playerStuckSince = now;
+    }
+  } else {
+    state.playerStuckSince = 0;
+  }
   updateBoost(state.player, now, action);
 }
 
@@ -718,7 +752,7 @@ function updateEnemy(now) {
   const retreat = dist < 11 ? -0.9 : dist > 19 ? 0.62 : 0.15;
   const move = dir.clone().multiplyScalar(retreat).add(side.multiplyScalar(state.enemy.state.strafeSign * 1.05));
 
-  const moveScalar = now < state.enemy.state.hitStunUntil ? 5.8 : 10.6;
+  const moveScalar = now < state.enemy.state.hitStunUntil ? 0 : 10.6;
   state.enemy.body.velocity.x = move.x * moveScalar;
   state.enemy.body.velocity.z = move.z * moveScalar;
   if (Math.abs(state.enemy.body.velocity.x) + Math.abs(state.enemy.body.velocity.z) < 0.08) {
@@ -889,8 +923,14 @@ function startMatch() {
   renderer.domElement.style.pointerEvents = 'auto';
   state.player = createMech(0x62d7ff, UNIT_DATA[state.playerUnitKey]);
   state.enemy = createMech(0xff7ad5, UNIT_DATA[state.enemyUnitKey]);
-  state.player.body.position.set(-16, 2.45, 0);
-  state.enemy.body.position.set(16, 2.45, 0);
+  if (state.mapKey === 'arena2') {
+    // Streets: spawn on opposite ends of the cross road (X axis), not the bridge lane.
+    state.player.body.position.set(-108, 2.45, 0);
+    state.enemy.body.position.set(108, 2.45, 0);
+  } else {
+    state.player.body.position.set(-16, 2.45, 0);
+    state.enemy.body.position.set(16, 2.45, 0);
+  }
   buildArenaForMap(state.mapKey);
   const now = performance.now();
   state.player.state.lastFireAt = now;
@@ -941,8 +981,18 @@ function showSelectMenu() {
 
           const mapMenu = document.createElement('div');
           mapMenu.className = 'menu';
-          mapMenu.innerHTML = `<h2>Select Map</h2>${mapEntries.map(([id, map]) => `<button data-map="${id}">${map.name}</button>`).join('')}`;
+          mapMenu.innerHTML = `<h2>Select Map</h2>
+            <label style="display:flex;align-items:center;justify-content:center;gap:8px;margin:10px 0 14px;color:#d8fcff;">
+              <input type="checkbox" id="dummy-mode-toggle" />
+              Dummy (BOT projectile damage = 0)
+            </label>
+            ${mapEntries.map(([id, map]) => `<button data-map="${id}">${map.name}</button>`).join('')}`;
           app.appendChild(mapMenu);
+          const dummyModeToggle = mapMenu.querySelector('#dummy-mode-toggle');
+          dummyModeToggle.checked = !!state.dummyMode;
+          dummyModeToggle.addEventListener('change', () => {
+            state.dummyMode = dummyModeToggle.checked;
+          });
 
           mapMenu.querySelectorAll('button[data-map]').forEach((mapButton) => {
             mapButton.addEventListener('pointerdown', (mapEvent) => {
@@ -1219,7 +1269,7 @@ function addRamp({ minX, maxX, minZ, maxZ, axis, lowY, highY, material, thicknes
   const mesh = new THREE.Mesh(geo, material);
   mesh.position.set((minX + maxX) / 2, (lowY + highY) / 2, (minZ + maxZ) / 2);
   if (axis === 'x') mesh.rotation.z = -angle;
-  else mesh.rotation.x = angle;
+  else mesh.rotation.x = -angle;
   scene.add(mesh);
   arenaDecor.push(mesh);
   arenaSurfaces.push({
@@ -1287,12 +1337,12 @@ function buildArenaForMap(mapKey) {
   const BRIDGE_HALF_X = 8;
   const BRIDGE_MIN_Z = -28;
   const BRIDGE_MAX_Z = 28;
-  const RAMP_HALF_X = 4;
+  const RAMP_HALF_X = BRIDGE_HALF_X;
   const RAMP_LOW_Y = 0.45;
-  const RAMP_S_MIN_Z = -44;
+  const RAMP_S_MIN_Z = -56;
   const RAMP_S_MAX_Z = -28;
   const RAMP_N_MIN_Z = 28;
-  const RAMP_N_MAX_Z = 44;
+  const RAMP_N_MAX_Z = 56;
 
   // Sidewalks lining the main avenue (street runs along X, narrow in Z)
   addPlatform({ minX: -120, maxX: 120, minZ: -18, maxZ: -12, top: 0.45, material: sidewalk });
@@ -1303,8 +1353,7 @@ function buildArenaForMap(mapKey) {
   addPlatform({ minX: -34, maxX: 34, minZ: 18, maxZ: 58, top: 0.45, material: sidewalk });
 
   // ===== Storefront buildings =====
-  // Pulled back to z=±72 (was -64) to make room for bigger plazas/ramps
-  // and the alley gap at x=0 is wider (skip x range -18..18)
+  // Pulled closer to sidewalks while preserving movement lanes.
   const southBuildings = [
     { x: -100, sx: 28, h: 14, mat: storefrontA },
     { x: -68, sx: 22, h: 11, mat: storefrontC },
@@ -1314,7 +1363,7 @@ function buildArenaForMap(mapKey) {
     { x: 100, sx: 28, h: 15, mat: storefrontC }
   ];
   southBuildings.forEach((b) => {
-    addBlockingBox({ x: b.x, y: b.h / 2, z: -78, sx: b.sx, sy: b.h, sz: 24, material: b.mat });
+    addBlockingBox({ x: b.x, y: b.h / 2, z: -48, sx: b.sx, sy: b.h, sz: 24, material: b.mat });
   });
   const northBuildings = [
     { x: -100, sx: 28, h: 13, mat: storefrontD },
@@ -1325,7 +1374,7 @@ function buildArenaForMap(mapKey) {
     { x: 100, sx: 28, h: 12, mat: storefrontA }
   ];
   northBuildings.forEach((b) => {
-    addBlockingBox({ x: b.x, y: b.h / 2, z: 78, sx: b.sx, sy: b.h, sz: 24, material: b.mat });
+    addBlockingBox({ x: b.x, y: b.h / 2, z: 48, sx: b.sx, sy: b.h, sz: 24, material: b.mat });
   });
 
   // Outer back walls to close the block
@@ -1343,15 +1392,7 @@ function buildArenaForMap(mapKey) {
   const railLength = BRIDGE_MAX_Z - BRIDGE_MIN_Z;
   addBlockingBox({ x: -BRIDGE_HALF_X - 0.2, y: BRIDGE_TOP + RAIL_H / 2, z: 0, sx: 0.4, sy: RAIL_H, sz: railLength, material: railing });
   addBlockingBox({ x: BRIDGE_HALF_X + 0.2, y: BRIDGE_TOP + RAIL_H / 2, z: 0, sx: 0.4, sy: RAIL_H, sz: railLength, material: railing });
-  // End railings cap each bridge end except for the ramp opening.
-  // Bridge x:[-8..8], ramp opening x:[-4..4] → cap each side from |x|=4 to |x|=8 (width 4).
-  const endCapHalf = BRIDGE_HALF_X - RAMP_HALF_X; // 4
-  const endCapCenterX = (BRIDGE_HALF_X + RAMP_HALF_X) / 2; // 6
-  for (const sx of [-1, 1]) {
-    for (const zEdge of [BRIDGE_MIN_Z - 0.3, BRIDGE_MAX_Z + 0.3]) {
-      addBlockingBox({ x: sx * endCapCenterX, y: BRIDGE_TOP + RAIL_H / 2, z: zEdge, sx: endCapHalf, sy: RAIL_H, sz: 0.4, material: railing });
-    }
-  }
+  // No hanging end-caps across bridge entries; slope gates are provided along ramp edges.
   // Underside support pillars (set into the sidewalks, not the street)
   addBlockingBox({ x: -BRIDGE_HALF_X + 0.6, y: BRIDGE_TOP / 2, z: -15, sx: 1.4, sy: BRIDGE_TOP, sz: 1.4, material: railing });
   addBlockingBox({ x: BRIDGE_HALF_X - 0.6, y: BRIDGE_TOP / 2, z: -15, sx: 1.4, sy: BRIDGE_TOP, sz: 1.4, material: railing });
@@ -1372,14 +1413,14 @@ function buildArenaForMap(mapKey) {
     axis: 'z', lowY: BRIDGE_TOP, highY: RAMP_LOW_Y,
     material: ramp
   });
-  // Side walls flanking each ramp — tall enough to block units even at the high end of the slope
-  const RAMP_WALL_H = BRIDGE_TOP + 4;
-  const rampLen = RAMP_S_MAX_Z - RAMP_S_MIN_Z;
+  // Single long side gate pieces along each slope edge (vertical-only approximation).
+  const RAMP_WALL_H = RAIL_H;
+  const slopeGateLen = (RAMP_S_MAX_Z - RAMP_S_MIN_Z) - 2;
   const rampMidS = (RAMP_S_MIN_Z + RAMP_S_MAX_Z) / 2;
   const rampMidN = (RAMP_N_MIN_Z + RAMP_N_MAX_Z) / 2;
   for (const sx of [-1, 1]) {
-    addBlockingBox({ x: sx * (RAMP_HALF_X + 0.4), y: RAMP_WALL_H / 2, z: rampMidS, sx: 0.5, sy: RAMP_WALL_H, sz: rampLen, material: railing });
-    addBlockingBox({ x: sx * (RAMP_HALF_X + 0.4), y: RAMP_WALL_H / 2, z: rampMidN, sx: 0.5, sy: RAMP_WALL_H, sz: rampLen, material: railing });
+    addBlockingBox({ x: sx * (RAMP_HALF_X + 0.2), y: (RAMP_LOW_Y + BRIDGE_TOP) / 2 + RAMP_WALL_H / 2, z: rampMidS, sx: 0.45, sy: RAMP_WALL_H, sz: slopeGateLen, material: railing });
+    addBlockingBox({ x: sx * (RAMP_HALF_X + 0.2), y: (RAMP_LOW_Y + BRIDGE_TOP) / 2 + RAMP_WALL_H / 2, z: rampMidN, sx: 0.45, sy: RAMP_WALL_H, sz: slopeGateLen, material: railing });
   }
 
   // ===== Akihabara dressing =====
@@ -1498,10 +1539,19 @@ function resolveUnitObstacleCollisions(mech) {
     const dz = pos.z - nearestZ;
     const d2 = dx * dx + dz * dz;
     if (d2 >= radius * radius) continue;
-    const d = Math.sqrt(d2) || 0.0001;
-    const push = radius - d;
-    pos.x += (dx / d) * push;
-    pos.z += (dz / d) * push;
+    const d = Math.sqrt(d2);
+    const push = radius - Math.max(d, 0.0001);
+    if (d > 0.0001) {
+      pos.x += (dx / d) * push;
+      pos.z += (dz / d) * push;
+    } else {
+      const cx = (o.minX + o.maxX) / 2;
+      const cz = (o.minZ + o.maxZ) / 2;
+      const ox = pos.x - cx;
+      const oz = pos.z - cz;
+      if (Math.abs(ox) >= Math.abs(oz)) pos.x += Math.sign(ox || 1) * push;
+      else pos.z += Math.sign(oz || 1) * push;
+    }
     mech.body.velocity.x = 0; mech.body.velocity.z = 0;
   }
 }
