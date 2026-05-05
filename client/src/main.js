@@ -923,8 +923,13 @@ function startMatch() {
   renderer.domElement.style.pointerEvents = 'auto';
   state.player = createMech(0x62d7ff, UNIT_DATA[state.playerUnitKey]);
   state.enemy = createMech(0xff7ad5, UNIT_DATA[state.enemyUnitKey]);
-  state.player.body.position.set(-16, 2.45, 0);
-  state.enemy.body.position.set(16, 2.45, 0);
+  if (state.mapKey === 'arena2') {
+    state.player.body.position.set(0, 2.45, -108);
+    state.enemy.body.position.set(0, 2.45, 108);
+  } else {
+    state.player.body.position.set(-16, 2.45, 0);
+    state.enemy.body.position.set(16, 2.45, 0);
+  }
   buildArenaForMap(state.mapKey);
   const now = performance.now();
   state.player.state.lastFireAt = now;
@@ -1386,12 +1391,7 @@ function buildArenaForMap(mapKey) {
   const railLength = BRIDGE_MAX_Z - BRIDGE_MIN_Z;
   addBlockingBox({ x: -BRIDGE_HALF_X - 0.2, y: BRIDGE_TOP + RAIL_H / 2, z: 0, sx: 0.4, sy: RAIL_H, sz: railLength, material: railing });
   addBlockingBox({ x: BRIDGE_HALF_X + 0.2, y: BRIDGE_TOP + RAIL_H / 2, z: 0, sx: 0.4, sy: RAIL_H, sz: railLength, material: railing });
-  // Keep only small side caps; leave center open to avoid blocking bridge entry.
-  for (const sx of [-1, 1]) {
-    for (const zEdge of [BRIDGE_MIN_Z - 0.3, BRIDGE_MAX_Z + 0.3]) {
-      addBlockingBox({ x: sx * 6, y: BRIDGE_TOP + RAIL_H / 2, z: zEdge, sx: 4, sy: RAIL_H, sz: 0.4, material: railing });
-    }
-  }
+  // No hanging end-caps across bridge entries; slope gates are provided along ramp edges.
   // Underside support pillars (set into the sidewalks, not the street)
   addBlockingBox({ x: -BRIDGE_HALF_X + 0.6, y: BRIDGE_TOP / 2, z: -15, sx: 1.4, sy: BRIDGE_TOP, sz: 1.4, material: railing });
   addBlockingBox({ x: BRIDGE_HALF_X - 0.6, y: BRIDGE_TOP / 2, z: -15, sx: 1.4, sy: BRIDGE_TOP, sz: 1.4, material: railing });
@@ -1420,6 +1420,8 @@ function buildArenaForMap(mapKey) {
   for (const sx of [-1, 1]) {
     addBlockingBox({ x: sx * (RAMP_HALF_X + 0.4), y: BRIDGE_TOP + RAIL_H / 2, z: rampMidS, sx: 0.5, sy: RAMP_WALL_H, sz: rampLen, material: railing });
     addBlockingBox({ x: sx * (RAMP_HALF_X + 0.4), y: BRIDGE_TOP + RAIL_H / 2, z: rampMidN, sx: 0.5, sy: RAMP_WALL_H, sz: rampLen, material: railing });
+    addBlockingBox({ x: sx * (RAMP_HALF_X + 0.2), y: BRIDGE_TOP + RAIL_H / 2, z: RAMP_S_MAX_Z - 0.2, sx: 0.4, sy: RAIL_H, sz: 1.2, material: railing });
+    addBlockingBox({ x: sx * (RAMP_HALF_X + 0.2), y: BRIDGE_TOP + RAIL_H / 2, z: RAMP_N_MIN_Z + 0.2, sx: 0.4, sy: RAIL_H, sz: 1.2, material: railing });
   }
 
   // ===== Akihabara dressing =====
