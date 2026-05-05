@@ -189,6 +189,7 @@ function createMech(color, unitData) {
   const body = new CANNON.Body({ mass: 3, shape: new CANNON.Box(new CANNON.Vec3(0.95, 1.8, 0.8)), linearDamping: 0.24 });
   body.position.set(0, 2.45, 0);
   body.type = CANNON.Body.KINEMATIC;
+  body.allowSleep = false;
   body.updateMassProperties();
   body.linearFactor.set(1, 0, 1);
   world.addBody(body);
