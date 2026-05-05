@@ -19,7 +19,7 @@ const UNIT_DATA = {
   },
   unit2: {
     name: 'Unit 2 / Shotgun',
-    lockRange: 56,
+    lockRange: 43,
     projectileSpeed: 45,
     fireCooldownMs: 700,
     spreadCount: 8,
