@@ -36,7 +36,7 @@ const UNIT_DATA = {
     fireCooldownMs: 150,
     spreadCount: 1,
     spreadAngle: 0.02,
-    damage: 41,
+    damage: 40,
     magCapacity: 5,
     reloadMs: 2500,
     autoReload: false,
