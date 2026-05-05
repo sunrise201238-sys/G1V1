@@ -563,7 +563,7 @@ function applyRepulsion(now) {
 
 function updateBoost(mech, now, action) {
   const s = mech.state;
-  const groundY = (mech.surfaceY ?? 0) + 2.55;
+  const groundY = 2.55;
   const grounded = mech.grounded || mech.body.position.y <= groundY;
 
   if (now < s.overheatedUntil) {
@@ -646,7 +646,7 @@ function updatePlayer(now) {
       stepState.queuedMomentumVX = 0;
       stepState.queuedMomentumVZ = 0;
     }
-  } else if (input.jump && canDash && stepState.boost >= JUMP_BOOST_COST && (state.player.grounded || state.player.body.position.y <= (state.player.surfaceY ?? 0) + 2.6) && now >= state.player.state.jumpCooldownUntil) {
+  } else if (input.jump && canDash && stepState.boost >= JUMP_BOOST_COST && (state.player.grounded || state.player.body.position.y <= 2.6) && now >= state.player.state.jumpCooldownUntil) {
     input.boost = false;
     state.player.state.boost = Math.max(0, state.player.state.boost - JUMP_BOOST_COST);
     state.player.state.refillPausedUntil = now + 500;
@@ -712,7 +712,7 @@ function updatePlayer(now) {
   if (!input.shootHold) state.player.state.machineBurstRemaining = 0;
 
   if (state.player.grounded) {
-    state.player.body.position.y = (state.player.surfaceY ?? 0) + 2.45;
+    state.player.body.position.y = 2.45;
     state.player.body.velocity.y = 0;
     state.player.body.linearFactor.set(1, 0, 1);
     state.player.state.airborne = false;
@@ -822,9 +822,9 @@ function updateLocksAndReticle() {
 
 function updateTransforms(dt) {
   [state.player, state.enemy].forEach((m) => {
-    const footRef = m.state.airborne ? (m.body.position.y - 2.45) : (m.surfaceY ?? 0);
+    const footRef = m.state.airborne ? (m.body.position.y - 2.45) : 0;
     const surfaceY = groundHeightAt(m.body.position.x, m.body.position.z, footRef);
-    const standY = surfaceY + 2.45;
+    const standY = 2.45;
     if (m.state.airborne) {
       m.state.jumpVelocity += world.gravity.y * dt;
       m.body.position.y += m.state.jumpVelocity * dt;
