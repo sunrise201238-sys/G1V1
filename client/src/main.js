@@ -620,7 +620,7 @@ function updatePlayer(now) {
   const baseSpeed = useSprint ? BOOST_MOVE_SPEED : (recoveringFromDash ? 4.55 : 16);
   const speed = (!hasBoost || emptyPenaltyActive) ? Math.min(baseSpeed, 7.5) : baseSpeed;
   const hitStunned = now < state.player.state.hitStunUntil;
-  const hitStunScale = hitStunned ? 0 : 1;
+  const hitStunScale = hitStunned ? 0.25 : 1;
   const canInputMove = !emptyPenaltyActive;
   if (!inStep) {
     state.player.body.velocity.x = canInputMove ? move.x * speed * hitStunScale : 0;
@@ -646,7 +646,7 @@ function updatePlayer(now) {
       stepState.queuedMomentumVX = 0;
       stepState.queuedMomentumVZ = 0;
     }
-  } else if (input.jump && canDash && stepState.boost >= JUMP_BOOST_COST && (state.player.grounded || state.player.body.position.y <= (state.player.surfaceY ?? 0) + 2.6) && now >= state.player.state.jumpCooldownUntil) {
+  } else if (input.jump && canInputMove && stepState.boost >= JUMP_BOOST_COST && (state.player.grounded || state.player.body.position.y <= (state.player.surfaceY ?? 0) + 2.6) && now >= state.player.state.jumpCooldownUntil) {
     input.boost = false;
     state.player.state.boost = Math.max(0, state.player.state.boost - JUMP_BOOST_COST);
     state.player.state.refillPausedUntil = now + 500;
@@ -656,7 +656,7 @@ function updatePlayer(now) {
     state.player.state.jumpCooldownUntil = now + 1500;
     inheritMomentum(state.player, 70);
     action = 'jump';
-  } else if (input.boost && canDash) {
+  } else if (input.boost && canInputMove) {
     state.player.state.antiMeleeUntil = now + 260;
     inheritMomentum(state.player, MOMENTUM_STANDARD * 1.5);
     action = 'dash';
@@ -664,7 +664,7 @@ function updatePlayer(now) {
   }
 
   if (input.stepTap) {
-    if (!inStep && canDash && now >= stepState.stepCooldownUntil && stepState.boost >= STEP_BOOST_COST) {
+    if (!inStep && canInputMove && now >= stepState.stepCooldownUntil && stepState.boost >= STEP_BOOST_COST) {
       let stepDir = move.clone();
       if (stepDir.lengthSq() < 0.03) stepDir.set(state.player.body.velocity.x, 0, state.player.body.velocity.z);
       if (stepDir.lengthSq() < 0.03) stepDir.set(p.x - e.x, 0, p.z - e.z);
@@ -833,18 +833,27 @@ function updateTransforms(dt) {
         m.state.airborne = false;
         m.state.jumpVelocity = 0;
       }
-    } else if (m.body.position.y > standY + 0.6) {
-      m.state.airborne = true;
-      m.state.jumpVelocity = 0;
-    } else {
+    }
+    if (m.grounded) {
       m.body.position.y = standY;
       m.body.velocity.y = 0;
       m.body.linearFactor.set(1, 0, 1);
+      m.state.airborne = false;
+      m.state.jumpVelocity = 0;
+    } else if (!m.state.airborne && m.body.position.y > standY + 0.6) {
+      m.state.airborne = true;
       m.state.jumpVelocity = 0;
     }
-    m.surfaceY = surfaceY;
-    m.grounded = !m.state.airborne;
     m.root.position.set(m.body.position.x, m.body.position.y + m.modelYOffset, m.body.position.z);
+    const from = new CANNON.Vec3(m.body.position.x, m.body.position.y + 1.1, m.body.position.z);
+    const to = new CANNON.Vec3(m.body.position.x, m.body.position.y - 6, m.body.position.z);
+    raycastResult.reset();
+    const physicsGrounded = world.raycastClosest(from, to, { collisionFilterMask: -1, skipBackfaces: true }, raycastResult)
+      && raycastResult.body === groundBody
+      && raycastResult.distance <= m.legLength;
+    const surfaceGrounded = Math.abs(m.body.position.y - standY) <= 0.55;
+    m.surfaceY = surfaceY;
+    m.grounded = physicsGrounded || surfaceGrounded;
   });
   const pToE = new THREE.Vector3().subVectors(state.enemy.root.position, state.player.root.position).normalize();
   state.player.root.rotation.y = Math.atan2(pToE.x, pToE.z);
